@@ -54,6 +54,11 @@ The API will be available at `http://127.0.0.1:8000`.
 - **Documentation**: Visit `http://127.0.0.1:8000/docs` for the interactive Swagger UI.
 - **Upload CSV**: `POST /api/upload` - Upload your CSV file for indexing and profiling.
 - **Query**: `POST /api/query` - Ask questions about your data (e.g., "What is the average price?", "Explain the user feedback Trends").
+Example payload - 
+{
+  "query": "summarise the file",
+  "file_path": "data/netflix_titles.csv"
+}
 
 ## Architecture
 This project follows a Multi-Agent architecture:
@@ -65,3 +70,21 @@ This project follows a Multi-Agent architecture:
 *Note: Agents can be easily switched between `ollama_client` and `anthropic_client` in the code.*
 
 For more details, read the DETAILED_README.md file.
+
+
+
+Sample Query Payload
+{
+  "query": "What is the average release_year?",
+  "file_path": "data/netflix_titles.csv"
+}
+
+
+Response:
+{
+  "answer": "The average release year of the data retrieved is 2013.36. This value is based on a sample size of 6,234 data points. Since the data provided is limited to a specific set of records, the average release year may not be representative of the entire population or dataset. Additional context or caveats should be considered when interpreting this result.",
+  "context": [
+    "data: {'release_year': 2013.3593198588387}",
+    "row_count: 6234"
+  ]
+}

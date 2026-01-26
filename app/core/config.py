@@ -5,7 +5,7 @@ class Settings(BaseSettings):
     OLLAMA_MODEL: str = "phi"
     FAISS_INDEX_PATH: str = "data/faiss_index"
     ANTHROPIC_API_KEY: str = ""
-    ANTHROPIC_MODEL: str = "claude-3-5-sonnet-20240620"
+    ANTHROPIC_MODEL: str = "claude-3-haiku-20240307"
     EMBEDDING_PROVIDER: str = "huggingface" # Options: ollama, huggingface
     HUGGINGFACE_MODEL: str = "all-MiniLM-L6-v2"
     

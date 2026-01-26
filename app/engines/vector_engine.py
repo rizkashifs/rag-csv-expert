@@ -2,12 +2,25 @@ import os
 import logging
 from typing import List
 from langchain_community.vectorstores import FAISS
-from langchain_community.vectorstores import FAISS
 from langchain_ollama import OllamaEmbeddings
-from langchain_huggingface import HuggingFaceEmbeddings
 from app.core.config import settings
+try:
+    from sentence_transformers import SentenceTransformer
+except ImportError:
+    SentenceTransformer = None
 
 logger = logging.getLogger(__name__)
+
+class DirectHuggingFaceEmbeddings:
+    """Wrapper to make SentenceTransformer compatible with LangChain VectorStore"""
+    def __init__(self, model_name):
+        self.model = SentenceTransformer(model_name)
+    def embed_documents(self, texts):
+        return self.model.encode(texts).tolist()
+    def embed_query(self, text):
+        return self.model.encode(text).tolist()
+    def __call__(self, text): # Required by some langchain versions
+        return self.embed_query(text)
 
 class VectorEngine:
     """
@@ -15,8 +28,8 @@ class VectorEngine:
     """
     def __init__(self):
         if settings.EMBEDDING_PROVIDER == "huggingface":
-            logger.info(f"Initializing HuggingFace embeddings: {settings.HUGGINGFACE_MODEL}")
-            self.embeddings = HuggingFaceEmbeddings(model_name=settings.HUGGINGFACE_MODEL)
+            logger.info(f"Initializing direct SentenceTransformer: {settings.HUGGINGFACE_MODEL}")
+            self.embeddings = DirectHuggingFaceEmbeddings(settings.HUGGINGFACE_MODEL)
         else:
             logger.info(f"Initializing Ollama embeddings: {settings.OLLAMA_MODEL}")
             self.embeddings = OllamaEmbeddings(

@@ -80,7 +80,7 @@ class OrchestrationService:
             "answer": answer,
             "question_type": question_type,
             "intent": intent,
-            "retrieved_data": str(retrieved_data)[:500] # Truncated for response logs
+            "retrieved_data": retrieved_data
         }
 
 # Singleton

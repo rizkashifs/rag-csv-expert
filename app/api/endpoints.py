@@ -51,12 +51,17 @@ async def query_rag(request: QueryRequest):
     result = retrieve_csv(request.file_path, request.query)
     logger.info("Query processing complete.")
     
-    # Ensure context is a list as expected by QueryResponse
-    context = result.get("retrieved_data", [])
-    if isinstance(context, str):
-        context = [context]
-    elif not isinstance(context, list):
-        context = [str(context)]
+    # Ensure context is a list of strings as expected by QueryResponse
+    raw_data = result.get("retrieved_data", [])
+    
+    if isinstance(raw_data, list):
+        # Handle list of strings or list of dicts
+        context = [str(item) for item in raw_data]
+    elif isinstance(raw_data, dict):
+        # Handle deterministic calculation results
+        context = [f"{k}: {v}" for k, v in raw_data.items()]
+    else:
+        context = [str(raw_data)]
 
     return QueryResponse(
         answer=result["answer"],
