@@ -34,10 +34,15 @@ class VectorEngine:
         """
         Creates and saves a new FAISS index.
         """
-        vector_store = FAISS.from_texts(texts, self.embeddings)
-        save_path = os.path.join(settings.FAISS_INDEX_PATH, index_name)
-        os.makedirs(settings.FAISS_INDEX_PATH, exist_ok=True)
-        vector_store.save_local(save_path)
+        try:
+            vector_store = FAISS.from_texts(texts, self.embeddings)
+            save_path = os.path.join(settings.FAISS_INDEX_PATH, index_name)
+            os.makedirs(settings.FAISS_INDEX_PATH, exist_ok=True)
+            vector_store.save_local(save_path)
+            return True
+        except Exception as e:
+            print(f"Error creating vector index: {e}")
+            raise ConnectionError(f"Could not connect to Ollama: {e}")
 
 # Singleton
 vector_engine = VectorEngine()

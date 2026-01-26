@@ -1,9 +1,9 @@
+import json
+import logging
+import re
 import pandas as pd
 import chardet
-import re
-import logging
 from typing import Tuple, List, Dict, Any
-from app.services.data_profiler import generate_data_profile, format_profile_for_llm
 
 logger = logging.getLogger(__name__)
 
@@ -11,6 +11,39 @@ class IngestionService:
     """
     Handles robust CSV loading, cleaning, and profiling.
     """
+    def _generate_data_profile(self, df: pd.DataFrame) -> str:
+        """Generates a semantic profile of the DataFrame."""
+        profile = {
+            "summary": {"total_rows": len(df), "total_columns": len(df.columns)},
+            "columns": {}
+        }
+        for col in df.columns:
+            col_type = str(df[col].dtype)
+            col_data = {"type": col_type, "missing_values": int(df[col].isnull().sum())}
+            if pd.api.types.is_numeric_dtype(df[col]):
+                col_data.update({
+                    "min": float(df[col].min()) if not pd.isna(df[col].min()) else "N/A",
+                    "max": float(df[col].max()) if not pd.isna(df[col].max()) else "N/A",
+                })
+            else:
+                unique_vals = df[col].dropna().unique()
+                col_data["unique_samples"] = [str(x) for x in unique_vals[:5]]
+            profile["columns"][col] = col_data
+        return json.dumps(profile, indent=2)
+
+    def _format_profile_for_llm(self, profile_json: str) -> str:
+        """Formats the profile for LLM context."""
+        data = json.loads(profile_json)
+        lines = [f"Dataset: {data['summary']['total_rows']} rows, {data['summary']['total_columns']} cols"]
+        for col, info in data["columns"].items():
+            line = f"- {col} ({info['type']}): "
+            if "min" in info:
+                line += f"Range [{info['min']} to {info['max']}]"
+            elif "unique_samples" in info:
+                line += f"Samples: {', '.join(info['unique_samples'])}"
+            lines.append(line)
+        return "\n".join(lines)
+
     def read_csv(self, file_path: str) -> Dict[str, Any]:
         """
         Loads CSV with robust detection and returns structured data + metadata.
@@ -30,8 +63,8 @@ class IngestionService:
             df.fillna("N/A", inplace=True)
 
             # Profiling
-            profile_json = generate_data_profile(df)
-            semantic_context = format_profile_for_llm(profile_json)
+            profile_json = self._generate_data_profile(df)
+            semantic_context = self._format_profile_for_llm(profile_json)
             
             return {
                 "df": df,
