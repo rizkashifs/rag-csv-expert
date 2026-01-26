@@ -23,5 +23,5 @@ class CSVRetrieverAgent(BaseAgent):
             return csv_engine.execute(df, intent)
         else:
             # Fallback to vector engine for semantic questions
-            query = intent.get("query") # Reasoning agent should pass the original query if semantic
+            query = input_data.get("query")
             return vector_engine.search(query, index_name)

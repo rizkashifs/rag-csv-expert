@@ -1,6 +1,9 @@
-from app.agents.base import BaseAgent
-from app.models.ollama_client import llm_client
 import json
+import logging
+from app.agents.base import BaseAgent
+from app.models.anthropic_client import anthropic_client as llm_client
+
+logger = logging.getLogger(__name__)
 
 class CSVReasoningAgent(BaseAgent):
     """
@@ -38,7 +41,9 @@ class CSVReasoningAgent(BaseAgent):
         
         messages = [{"role": "user", "content": prompt}]
         # Using temperature 0 for reasoning consistency
+        logger.info(f"Sending reasoning request to Anthropic for query: {query[:50]}...")
         response = llm_client.generate(messages, options={"temperature": 0.0})
+        logger.info("Received reasoning response from Anthropic.")
         
         try:
             return json.loads(response.strip())

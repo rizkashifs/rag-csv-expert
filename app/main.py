@@ -1,7 +1,11 @@
 import uvicorn
+import logging
 from fastapi import FastAPI
 from app.api.endpoints import router
 from app.core.config import settings
+
+# Setup basic logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 from fastapi.middleware.cors import CORSMiddleware
 

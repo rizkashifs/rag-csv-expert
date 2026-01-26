@@ -6,7 +6,8 @@ A disciplined, agentic RAG application specialized in complex CSV handling using
 - **Deterministic Data Processing**: Uses Pandas for calculations (sums, averages, filters) to eliminate LLM math hallucinations.
 - **Agentic Routing**: Automatically routes questions to either a **CSV Engine** (for data/numbers) or a **Vector Engine** (for semantic/meaning based questions).
 - **Industrial Strength Ingestion**: Robust handling of CSV encodings, delimiters, and automated semantic data profiling.
-- **Local & Private**: Option to run entirely on your machine using Ollama.
+- **Hybrid Embeddings**: Choose between **HuggingFace** (extremely fast, runs in Python) or **Ollama** for vector indexing.
+- **Local & Private**: Option to run entirely on your machine.
 - **Cloud Support**: Built-in client for Anthropic (Claude) for heavy-duty reasoning tasks.
 
 ## Prerequisites
@@ -25,8 +26,13 @@ ollama pull phi
 & "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe" pull phi
 ```
 
-### 2. Configure Anthropic (Optional)
-If you prefer using Claude, add your API key to a `.env` file:
+### 2. Configure Settings (Optional)
+You can switch embedding providers in `app/core/config.py`:
+```python
+EMBEDDING_PROVIDER = "huggingface"  # Options: "ollama", "huggingface"
+```
+
+If you prefer using Claude for reasoning, add your Anthropic API key to a `.env` file:
 ```env
 ANTHROPIC_API_KEY=your_sk_key_here
 ```

@@ -12,3 +12,5 @@ pydantic-settings
 chardet
 tabulate
 anthropic
+sentence-transformers
+langchain-huggingface

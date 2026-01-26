@@ -1,5 +1,8 @@
+import logging
 from app.agents.base import BaseAgent
-from app.models.ollama_client import llm_client
+from app.models.anthropic_client import anthropic_client as llm_client
+
+logger = logging.getLogger(__name__)
 
 class AnswerAgent(BaseAgent):
     """
@@ -30,4 +33,7 @@ class AnswerAgent(BaseAgent):
         
         messages = [{"role": "user", "content": prompt}]
         # Temp 0 for deterministic synthesis
-        return llm_client.generate(messages, options={"temperature": 0.0})
+        logger.info("Sending synthesis request to Anthropic...")
+        response = llm_client.generate(messages, options={"temperature": 0.0})
+        logger.info("Received answer from Anthropic.")
+        return response
