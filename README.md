@@ -48,3 +48,5 @@ This project follows a Multi-Agent architecture:
 2. **Reasoning Agent**: Generates a valid JSON query plan.
 3. **Retriever Agent**: Executes the plan using **deterministic engines** (Pandas) or **semantic engines** (FAISS).
 4. **Answer Agent**: Synthesizes the final result into a human-readable explanation with 0 temperature.
+
+For more details, read the DETAILED_README.md file.
