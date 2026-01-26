@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+python-multipart
+pandas
+ollama
+faiss-cpu
+langchain
+langchain-community
+langchain-ollama
+python-dotenv
+pydantic-settings
+chardet
+tabulate

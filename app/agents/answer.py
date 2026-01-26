@@ -1,0 +1,33 @@
+from app.agents.base import BaseAgent
+from app.models.ollama_client import llm_client
+
+class AnswerAgent(BaseAgent):
+    """
+    Generates final natural-language response using retrieved data and query plan.
+    Ensures deterministic output.
+    """
+    def run(self, input_data: dict) -> str:
+        """
+        Input: {"query": str, "retrieved_data": any, "intent": dict}
+        Output: Human-readable answer.
+        """
+        query = input_data.get("query")
+        retrieved_data = input_data.get("retrieved_data")
+        intent = input_data.get("intent")
+        
+        prompt = f"""
+        Convert the following deterministic data results into a human-readable explanation.
+        
+        User Question: {query}
+        Query Plan: {intent}
+        Retrieved Data: {retrieved_data}
+        
+        Rules:
+        - Never invent numbers.
+        - Add context and caveats if the data is limited.
+        - Be concise and factual.
+        """
+        
+        messages = [{"role": "user", "content": prompt}]
+        # Temp 0 for deterministic synthesis
+        return llm_client.generate(messages, options={"temperature": 0.0})
