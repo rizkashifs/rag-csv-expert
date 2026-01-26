@@ -11,3 +11,4 @@ python-dotenv
 pydantic-settings
 chardet
 tabulate
+anthropic
