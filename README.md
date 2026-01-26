@@ -1,6 +1,6 @@
 # RAG CSV Expert
 
-A disciplined, agentic RAG application specialized in complex CSV handling using local LLMs (Ollama + Llama3).
+A disciplined, agentic RAG application specialized in complex CSV handling using local LLMs (Ollama + Phi).
 
 ## Features
 - **Deterministic Data Processing**: Uses Pandas for calculations (sums, averages, filters) to eliminate LLM math hallucinations.
@@ -18,10 +18,10 @@ A disciplined, agentic RAG application specialized in complex CSV handling using
 Ensure Ollama is running, then pull the required model:
 ```powershell
 # If ollama is in your PATH:
-ollama pull llama3
+ollama pull phi
 
 # If you use the default Windows installation path:
-& "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe" pull llama3
+& "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe" pull phi
 ```
 
 ### 2. Install Dependencies

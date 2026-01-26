@@ -154,7 +154,7 @@ def execute(self, df: pd.DataFrame, intent: Dict) -> Dict:
 - Exact numbers guaranteed
 - Fast (Pandas is optimized)
 
-**Vector Engine (VectorEngine)** Semantic search using FAISS + Ollama embeddings:
+**Vector Engine (VectorEngine)** Semantic search using FAISS + Local embeddings (Ollama / Phi):
 
 ```python
 def search(self, query: str, index_name: str, k: int = 5) -> List[str]:
