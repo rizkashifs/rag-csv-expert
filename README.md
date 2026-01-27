@@ -79,7 +79,9 @@ This project follows a Multi-Agent architecture:
 
 *Note: Agents can be easily switched between `ollama_client` and `anthropic_client` in the code.*
 
-For more details, read the DETAILED_README.md file.
+
+**For more details, read the DETAILED_README.md file.**
+
 
 
 
