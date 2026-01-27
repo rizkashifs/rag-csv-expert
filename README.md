@@ -94,7 +94,9 @@ This project follows a Multi-Agent architecture with intelligent file routing:
 
 *Note: All agents use a unified LLM client that supports Ollama, Anthropic, and AWS Bedrock.*
 
-For more details, read the DETAILED_README.md file.
+
+
+
 
 
 
@@ -113,3 +115,6 @@ Response:
     "row_count: 6234"
   ]
 }
+
+
+**For more details, read the DETAILED_README.md file.**
