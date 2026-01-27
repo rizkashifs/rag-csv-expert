@@ -1,7 +1,7 @@
 import json
 import logging
 from app.agents.base import BaseAgent
-from app.models.anthropic_client import anthropic_client as llm_client
+from app.models.llm_client import llm_client
 
 logger = logging.getLogger(__name__)
 

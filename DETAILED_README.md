@@ -32,20 +32,17 @@ User Query
 
 **What it does:**
 
-- Automatically detects file encoding (handles international characters)
-- Intelligently detects CSV delimiters using pandas
-- Cleans messy headers (removes !, ?, special chars)
-- Drops empty rows, fills NaNs with "N/A"
-- Generates a semantic profile of the dataset
+- **CSV & Excel Support**: Handles `.csv`, `.xlsx`, and `.xls` files.
+- **Multi-Sheet Extraction**: Automatically processes all sheets in an Excel workbook.
+- **Auto-Encoding Detection**: Handles international characters using `chardet`.
+- **Intelligent Delimiter Detection**: Panda's engine auto-detects CSV separators.
+- **Header Sanitization**: Cleans messy headers (removes special characters, whitespace).
+- **Graceful Cleaning**: Drops empty rows, fills NaNs with "N/A".
+- **Semantic Profiling**: Generates a JSON profile of the dataset (all sheets) for LLM context.
 
-**Key code:**
-```python
-def read_csv(self, file_path: str) -> Dict[str, Any]:
-    # 1. Encoding detection (chardet)
-    # 2. Robust parsing (pandas with sep=None for auto-detection)
-    # 3. Cleaning (regex on headers, dropna, fillna)
-    # 4. Profiling (schema, distributions, sample values)
-```
+**Key features:**
+- `load_data()`: Central method for loading and profiling.
+- Multi-sheet profiling includes sheet names in context for the Reasoning agent.
 
 **Why this matters:** The semantic profile gives the LLM context without raw data:
 
@@ -123,6 +120,7 @@ Return JSON with:
 
 **Why this is genius:**
 
+- **Unified Client**: Easily switch between Ollama, Anthropic, or AWS Bedrock.
 - LLM maps user intent to database semantics without executing
 - Uses temperature=0 for consistency
 - Falls back gracefully if JSON parsing fails
@@ -154,14 +152,13 @@ def execute(self, df: pd.DataFrame, intent: Dict) -> Dict:
 - Exact numbers guaranteed
 - Fast (Pandas is optimized)
 
-**Vector Engine (VectorEngine)** Semantic search using FAISS + Local embeddings (Ollama / Phi):
+**Vector Engine (VectorEngine)** Semantic search using FAISS + Flexible local embeddings.
 
-```python
-def search(self, query: str, index_name: str, k: int = 5) -> List[str]:
-    vector_store = FAISS.load_local(save_path, self.embeddings)
-    docs = vector_store.similarity_search(query, k=k)
-    return [doc.page_content for doc in docs]
-```
+**Providers:**
+- **Ollama**: Uses your local Ollama models (e.g., `phi`, `llama3`).
+- **Hugging Face**: Uses `sentence-transformers` models (e.g., `all-MiniLM-L6-v2`) running locally via CPU/GPU.
+
+Configured via `EMBEDDING_PROVIDER` in `.env`.
 
 Used for:
 
@@ -270,6 +267,7 @@ print(result["answer"])  # Natural language response
 
 ## 📊 What Makes This Production-Ready
 
+- ✅ **Cloud-Ready** — Native support for Anthropic and AWS Bedrock (Converse API)
 - ✅ **Tested** — see tests for CSV cleaning and Netflix integration tests
 - ✅ **Robust** — handles encoding, dirty headers, multi-line fields
 - ✅ **Fast** — deterministic ops beat semantic search when possible

@@ -1,6 +1,9 @@
 import ollama
+import logging
 from app.core.config import settings
 from typing import List, Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 class LLMClient:
     """
@@ -15,6 +18,7 @@ class LLMClient:
         Sends a request to the LLM and returns the text response.
         """
         try:
+            logger.info(f"Ollama Request: model={self.model}, messages_count={len(messages)}")
             response = ollama.chat(
                 model=self.model,
                 messages=messages,
@@ -23,8 +27,14 @@ class LLMClient:
             )
             return response['message']['content']
         except Exception as e:
-            # In a production app, we'd log this properly
-            return f"LLM Error: {str(e)}"
+            logger.error(f"Ollama Error: {e}")
+            raise ConnectionError(f"Could not connect to Ollama: {e}")
+
+    def invoke_messages(self, messages: List[Dict[str, str]], options: Optional[Dict[str, Any]] = None) -> str:
+        """
+        Alias for generate to match user request.
+        """
+        return self.generate(messages, options)
 
 # Singleton instance
 llm_client = LLMClient()

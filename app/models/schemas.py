@@ -8,3 +8,4 @@ class QueryRequest(BaseModel):
 class QueryResponse(BaseModel):
     answer: str
     context: List[str]
+    metadata: Optional[dict] = None

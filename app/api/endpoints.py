@@ -14,32 +14,48 @@ router = APIRouter()
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     logger.info(f"Uploading file: {file.filename}")
-    if not file.filename.endswith('.csv'):
-        raise HTTPException(status_code=400, detail="Only CSV files are allowed")
+    if not file.filename.endswith(('.csv', '.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="Only CSV or Excel files are allowed")
     
     file_path = f"data/{file.filename}"
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     
     # 1. Ingest & Profile
-    logger.info("Ingesting and profiling CSV...")
-    data_bundle = ingestion_service.read_csv(file_path)
+    logger.info(f"Ingesting and profiling: {file.filename}")
+    data_bundle = ingestion_service.load_data(file_path)
+    df_data = data_bundle["df"]
     
     # 2. Index for Vector Search
-    logger.info("Creating vector index...")
-    # Convert whole rows to Markdown for semantic search (Sampling first 100 for speed)
-    sample_df = data_bundle["df"].head(100)
-    documents = sample_df.to_markdown(index=False).split('\n')
+    logger.info("Preparing documents for vector indexing...")
+    documents = []
     
+    if data_bundle["type"] == "excel":
+        for sheet_name, df in df_data.items():
+            # Sample from each sheet
+            sample = df.head(50)
+            if not sample.empty:
+                # Add sheet name context to each document
+                sheet_docs = sample.to_markdown(index=False).split('\n')
+                documents.extend([f"[Sheet: {sheet_name}] {doc}" for doc in sheet_docs if doc.strip()])
+    else:
+        # CSV handling
+        sample_df = df_data.head(100)
+        documents = [doc for doc in sample_df.to_markdown(index=False).split('\n') if doc.strip()]
+    
+    logger.info(f"Creating vector index with {len(documents)} document chunks...")
     try:
         vector_engine.create_index(documents, index_name=file.filename)
-    except ConnectionError as e:
-        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        logger.error(f"Vector Indexing Error: {e}")
+        raise HTTPException(status_code=503, detail=f"Embedding/Indexing failed: {str(e)}")
     
     return {
-        "message": "File uploaded and indexed successfully (Note: only first 100 rows indexed)",
+        "message": "File processed successfully",
         "file_path": file_path,
-        "row_count": data_bundle["row_count"]
+        "type": data_bundle["type"],
+        "row_count": data_bundle["row_count"],
+        "indexed_chunks": len(documents)
     }
 
 @router.post("/query", response_model=QueryResponse)
@@ -65,5 +81,6 @@ async def query_rag(request: QueryRequest):
 
     return QueryResponse(
         answer=result["answer"],
-        context=context
+        context=context,
+        metadata=result.get("metadata")
     )

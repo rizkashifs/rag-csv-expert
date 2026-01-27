@@ -1,14 +1,15 @@
 # RAG CSV Expert
 
-A disciplined, agentic RAG application specialized in complex CSV handling using local LLMs (Ollama + Phi) or Cloud LLMs (Anthropic Claude).
+A disciplined, agentic RAG application specialized in complex CSV and Excel handling using local LLMs (Ollama) or Cloud LLMs (Anthropic, AWS Bedrock).
 
 ## Features
-- **Deterministic Data Processing**: Uses Pandas for calculations (sums, averages, filters) to eliminate LLM math hallucinations.
+- **Multi-Format Support**: Robust handling of CSV and Excel (`.xlsx`, `.xls`) files, including multi-sheet workbooks.
+- **Deterministic Data Processing**: Uses Pandas for calculations (sums, averages, filters) across all sheets to eliminate LLM math hallucinations.
 - **Agentic Routing**: Automatically routes questions to either a **CSV Engine** (for data/numbers) or a **Vector Engine** (for semantic/meaning based questions).
 - **Industrial Strength Ingestion**: Robust handling of CSV encodings, delimiters, and automated semantic data profiling.
 - **Hybrid Embeddings**: Choose between **HuggingFace** (extremely fast, runs in Python) or **Ollama** for vector indexing.
-- **Local & Private**: Option to run entirely on your machine.
-- **Cloud Support**: Built-in client for Anthropic (Claude) for heavy-duty reasoning tasks.
+- **Local & Private**: Option to run entirely on your machine with Ollama.
+- **Enterprise Cloud Support**: Native integration with **Anthropic Claude** and **AWS Bedrock** (Converse API) for production workloads.
 
 ## Prerequisites
 1. **Ollama**: Download and install from [ollama.com](https://ollama.com).
@@ -37,6 +38,15 @@ If you prefer using Claude for reasoning, add your Anthropic API key to a `.env`
 ANTHROPIC_API_KEY=your_sk_key_here
 ```
 
+To use **AWS Bedrock**, configure your credentials and set the provider:
+```env
+LLM_PROVIDER=bedrock
+BEDROCK_MODEL_ID=anthropic.claude-3-haiku-20240307-v1:0
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=your_key
+AWS_SECRET_ACCESS_KEY=your_secret
+```
+
 ### 2. Install Dependencies
 Clone the repository and install the required packages:
 ```bash
@@ -52,7 +62,7 @@ The API will be available at `http://127.0.0.1:8000`.
 
 ## API Usage
 - **Documentation**: Visit `http://127.0.0.1:8000/docs` for the interactive Swagger UI.
-- **Upload CSV**: `POST /api/upload` - Upload your CSV file for indexing and profiling.
+- **Upload File**: `POST /api/upload` - Upload your CSV or Excel (`.xlsx`, `.xls`) file for indexing and profiling.
 - **Query**: `POST /api/query` - Ask questions about your data (e.g., "What is the average price?", "Explain the user feedback Trends").
 Example payload - 
 {

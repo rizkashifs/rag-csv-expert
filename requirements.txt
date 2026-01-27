@@ -14,3 +14,5 @@ tabulate
 anthropic
 sentence-transformers
 langchain-huggingface
+openpyxl
+boto3
