@@ -1,0 +1,292 @@
+# RAG CSV Expert - API Examples
+
+This file contains sample API requests and responses for the RAG CSV Expert application.
+
+================================================================================
+## 1. UPLOAD FILE
+================================================================================
+
+### Request
+POST http://127.0.0.1:8000/api/upload
+Content-Type: multipart/form-data
+
+file: sales_2023.csv
+
+### Response
+{
+  "message": "File processed and registered successfully",
+  "file_path": "data/sales_2023.csv",
+  "type": "csv",
+  "row_count": 1250,
+  "summary": "This dataset contains sales transaction records for the year 2023. It includes columns for transaction date, product name, category, quantity sold, unit price, total revenue, customer ID, and region. The data spans from January to December 2023 with daily transaction entries across multiple product categories including Electronics, Clothing, and Home Goods.",
+  "indexed_chunks": 150
+}
+
+================================================================================
+## 2. UPLOAD EXCEL FILE (Multi-Sheet)
+================================================================================
+
+### Request
+POST http://127.0.0.1:8000/api/upload
+Content-Type: multipart/form-data
+
+file: hr_data_2023.xlsx
+
+### Response
+{
+  "message": "File processed and registered successfully",
+  "file_path": "data/hr_data_2023.xlsx",
+  "type": "excel",
+  "row_count": 450,
+  "summary": "This Excel workbook contains human resources data with three sheets: 'Employees' (employee records with names, departments, salaries, and hire dates), 'Departments' (department information and budgets), and 'Performance' (quarterly performance review scores). The data represents a mid-sized company with employees across Engineering, Sales, HR, and Operations departments.",
+  "indexed_chunks": 200
+}
+
+================================================================================
+## 3. QUERY WITH EXPLICIT FILE PATH (Aggregation)
+================================================================================
+
+### Request
+POST http://127.0.0.1:8000/api/query
+Content-Type: application/json
+
+{
+  "query": "What was the total revenue in Q4 2023?",
+  "file_path": "data/sales_2023.csv"
+}
+
+### Response
+{
+  "answer": "The total revenue in Q4 2023 (October through December) was $2,847,392.50. This represents sales across all product categories and regions during the fourth quarter. The data is based on 3,245 transactions recorded during this period.",
+  "context": [
+    "data: {'total_revenue': 2847392.5}",
+    "row_count: 3245"
+  ],
+  "metadata": {
+    "execution_time": 4.23,
+    "data_type": "csv",
+    "row_count": 1250
+  }
+}
+
+================================================================================
+## 4. QUERY WITHOUT FILE PATH (Auto-Routing)
+================================================================================
+
+### Request
+POST http://127.0.0.1:8000/api/query
+Content-Type: application/json
+
+{
+  "query": "How many employees were hired in the Engineering department?"
+}
+
+### Response
+{
+  "answer": "Based on the HR data, 23 employees were hired in the Engineering department. The hiring occurred throughout the year with the highest concentration in Q1 (8 hires) and Q3 (9 hires). These new hires span various engineering roles including Software Engineers, DevOps Engineers, and QA Specialists.",
+  "context": [
+    "data: [{'name': 'Alice Johnson', 'department': 'Engineering', 'hire_date': '2023-01-15'}, ...]",
+    "row_count: 23"
+  ],
+  "metadata": {
+    "execution_time": 5.67,
+    "data_type": "excel",
+    "row_count": 450
+  }
+}
+
+Note: The FileSelectorAgent automatically identified that this query relates to HR data and routed it to hr_data_2023.xlsx
+
+================================================================================
+## 5. CORRELATION QUERY
+================================================================================
+
+### Request
+POST http://127.0.0.1:8000/api/query
+Content-Type: application/json
+
+{
+  "query": "What is the correlation between unit_price and quantity_sold?",
+  "file_path": "data/sales_2023.csv"
+}
+
+### Response
+{
+  "answer": "The correlation between unit_price and quantity_sold is -0.34, indicating a moderate negative correlation. This suggests that as the unit price increases, the quantity sold tends to decrease slightly. This is a common pattern in retail where higher-priced items typically sell in lower volumes compared to lower-priced products.",
+  "context": [
+    "data: {'unit_price': {'unit_price': 1.0, 'quantity_sold': -0.34}, 'quantity_sold': {'unit_price': -0.34, 'quantity_sold': 1.0}}",
+    "row_count: 1250"
+  ],
+  "metadata": {
+    "execution_time": 3.89,
+    "data_type": "csv",
+    "row_count": 1250
+  }
+}
+
+================================================================================
+## 6. SEMANTIC QUERY (Vector Search)
+================================================================================
+
+### Request
+POST http://127.0.0.1:8000/api/query
+Content-Type: application/json
+
+{
+  "query": "Explain the trends in customer purchasing behavior during the holiday season",
+  "file_path": "data/sales_2023.csv"
+}
+
+### Response
+{
+  "answer": "During the holiday season (November-December 2023), customer purchasing behavior showed several notable trends:\n\n1. **Increased Volume**: Transaction volume increased by 45% compared to the monthly average, with peak activity in the week before Christmas.\n\n2. **Category Shifts**: Electronics and Home Goods saw the highest growth (60% and 52% respectively), while Clothing maintained steady sales.\n\n3. **Higher Average Transaction Value**: The average transaction value increased from $127 to $189, indicating customers were purchasing more expensive items or buying in larger quantities.\n\n4. **Regional Variations**: The Northeast and West regions showed the strongest holiday sales growth at 52% and 48% respectively.\n\nThese patterns align with typical holiday shopping behavior where customers make larger, gift-oriented purchases.",
+  "context": [
+    "[Sheet: sales] | date | product_name | category | quantity_sold | total_revenue | region |",
+    "[Sheet: sales] | 2023-11-15 | Laptop Pro | Electronics | 3 | 2997.00 | Northeast |",
+    "[Sheet: sales] | 2023-12-20 | Smart Watch | Electronics | 5 | 1495.00 | West |",
+    "..."
+  ],
+  "metadata": {
+    "execution_time": 6.12,
+    "data_type": "csv",
+    "row_count": 1250
+  }
+}
+
+================================================================================
+## 7. MULTI-SHEET EXCEL QUERY
+================================================================================
+
+### Request
+POST http://127.0.0.1:8000/api/query
+Content-Type: application/json
+
+{
+  "query": "What is the average performance score for employees in the Sales department?",
+  "file_path": "data/hr_data_2023.xlsx"
+}
+
+### Response
+{
+  "answer": "The average performance score for employees in the Sales department is 4.2 out of 5.0. This is based on quarterly performance reviews from 45 sales employees. The Sales department's average is slightly above the company-wide average of 4.0, indicating strong overall performance in this department.",
+  "context": [
+    "data: {'performance_score': 4.2}",
+    "row_count: 45"
+  ],
+  "metadata": {
+    "execution_time": 4.56,
+    "data_type": "excel",
+    "row_count": 450
+  }
+}
+
+================================================================================
+## 8. COUNT QUERY
+================================================================================
+
+### Request
+POST http://127.0.0.1:8000/api/query
+Content-Type: application/json
+
+{
+  "query": "How many transactions were made in the Electronics category?"
+}
+
+### Response
+{
+  "answer": "There were 387 transactions in the Electronics category throughout 2023. This represents approximately 31% of all transactions in the dataset. Electronics was the second-most popular category after Clothing.",
+  "context": [
+    "data: 387",
+    "row_count: 387"
+  ],
+  "metadata": {
+    "execution_time": 3.21,
+    "data_type": "csv",
+    "row_count": 1250
+  }
+}
+
+================================================================================
+## 9. FILTER QUERY
+================================================================================
+
+### Request
+POST http://127.0.0.1:8000/api/query
+Content-Type: application/json
+
+{
+  "query": "Show me all sales transactions in the West region with revenue over $500",
+  "file_path": "data/sales_2023.csv"
+}
+
+### Response
+{
+  "answer": "I found 42 sales transactions in the West region with revenue exceeding $500. Here are the top 10 results:\n\n1. Laptop Pro - $2,997.00 (Dec 15)\n2. Gaming Console Bundle - $899.00 (Nov 28)\n3. 4K Television - $1,299.00 (Dec 10)\n...\n\nThese high-value transactions primarily occurred during Q4 and were concentrated in the Electronics and Home Goods categories.",
+  "context": [
+    "data: [{'date': '2023-12-15', 'product_name': 'Laptop Pro', 'category': 'Electronics', 'total_revenue': 2997.0, 'region': 'West'}, ...]",
+    "row_count: 42"
+  ],
+  "metadata": {
+    "execution_time": 3.78,
+    "data_type": "csv",
+    "row_count": 1250
+  }
+}
+
+================================================================================
+## 10. ERROR CASE - No Files Uploaded
+================================================================================
+
+### Request
+POST http://127.0.0.1:8000/api/query
+Content-Type: application/json
+
+{
+  "query": "What is the total revenue?"
+}
+
+### Response (when no files have been uploaded)
+{
+  "answer": "I don't have any files to analyze. Please upload one first.",
+  "status": "error"
+}
+
+================================================================================
+## 11. ERROR CASE - Ambiguous Query Without File Path
+================================================================================
+
+### Request
+POST http://127.0.0.1:8000/api/query
+Content-Type: application/json
+
+{
+  "query": "Show me the data"
+}
+
+### Response (when query is too vague for auto-routing)
+{
+  "answer": "I couldn't identify which file you're referring to from the available data. Could you specify which file (e.g., 'In the sales file...') or ask about the available files?",
+  "status": "error"
+}
+
+================================================================================
+NOTES:
+================================================================================
+
+1. **File Path Optional**: The `file_path` parameter is optional. If omitted, the FileSelectorAgent will automatically determine the most relevant file based on query intent.
+
+2. **Execution Time**: Response times vary based on:
+   - LLM provider (Ollama is typically faster for local, Bedrock/Anthropic for cloud)
+   - Query complexity
+   - Dataset size
+   - Whether data is cached in the registry
+
+3. **Supported Operations**:
+   - Aggregations: sum, avg, count, max, min, correlation
+   - Filters: Conditional filtering on any column
+   - Semantic: Natural language understanding and explanation
+   - Lookup: Finding specific records by ID or criteria
+
+4. **Multi-File Intelligence**: When multiple files are uploaded, the system maintains a registry of file summaries and uses LLM-based routing to select the correct dataset for each query.
+
+5. **Context Preservation**: Each response includes the actual data retrieved, allowing you to verify the LLM's interpretation and ensuring transparency.
