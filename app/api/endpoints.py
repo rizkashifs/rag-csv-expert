@@ -6,6 +6,7 @@ from app.models.schemas import QueryRequest, QueryResponse
 from app.services.ingestion import ingestion_service
 from app.engines.vector_engine import vector_engine
 from app.services.retrieval import retrieve_csv
+from app.services.orchestration import orchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -50,21 +51,23 @@ async def upload_file(file: UploadFile = File(...)):
         logger.error(f"Vector Indexing Error: {e}")
         raise HTTPException(status_code=503, detail=f"Embedding/Indexing failed: {str(e)}")
     
+    # 3. Register with Orchestrator (Generates Summary & adds to Registry)
+    file_summary = orchestrator.register_data(file_path)
+    
     return {
-        "message": "File processed successfully",
+        "message": "File processed and registered successfully",
         "file_path": file_path,
         "type": data_bundle["type"],
         "row_count": data_bundle["row_count"],
+        "summary": file_summary,
         "indexed_chunks": len(documents)
     }
 
 @router.post("/query", response_model=QueryResponse)
 async def query_rag(request: QueryRequest):
-    logger.info(f"Query request received for file: {request.file_path}")
-    if not request.file_path:
-         raise HTTPException(status_code=400, detail="file_path is required for now")
+    logger.info(f"Query request received. Target file: {request.file_path or 'Auto-Detect'}")
     
-    result = retrieve_csv(request.file_path, request.query)
+    result = retrieve_csv(request.query, request.file_path)
     logger.info("Query processing complete.")
     
     # Ensure context is a list of strings as expected by QueryResponse

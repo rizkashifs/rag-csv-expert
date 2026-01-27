@@ -17,9 +17,13 @@ class CSVReasoningAgent(BaseAgent):
         """
         query = input_data.get("query")
         schema_context = input_data.get("schema_context")
+        file_summary = input_data.get("file_summary", "No summary available.")
         
         prompt = f"""
         Represent the user's data question as a structured JSON query plan.
+        
+        Dataset Summary:
+        {file_summary}
         
         Schema Context:
         {schema_context}
@@ -27,7 +31,7 @@ class CSVReasoningAgent(BaseAgent):
         User Question: {query}
         
         Return a JSON object with:
-        - "operation": "sum" | "avg" | "count" | "max" | "min" | "filter" | "none"
+        - "operation": "sum" | "avg" | "count" | "max" | "min" | "correlation" | "filter" | "none"
         - "columns": [list of relevant column names]
         - "filters": {{ "column_name": "value" }}
         - "group_by": [list of columns]

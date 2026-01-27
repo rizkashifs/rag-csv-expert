@@ -17,9 +17,13 @@ class AnswerAgent(BaseAgent):
         query = input_data.get("query")
         retrieved_data = input_data.get("retrieved_data")
         intent = input_data.get("intent")
+        file_summary = input_data.get("file_summary", "No summary available.")
         
         prompt = f"""
         Convert the following deterministic data results into a human-readable explanation.
+        
+        Dataset Summary:
+        {file_summary}
         
         User Question: {query}
         Query Plan: {intent}

@@ -41,6 +41,13 @@ class CSVEngine:
                 sheet_result = filtered_df[existing_cols].mean().to_dict() if existing_cols else {}
             elif operation == "count":
                 sheet_result = len(filtered_df)
+            elif operation == "correlation" or operation == "corr":
+                if len(existing_cols) >= 2:
+                    # Ensure columns are numeric
+                    numeric_df = filtered_df[existing_cols].apply(pd.to_numeric, errors='coerce')
+                    sheet_result = numeric_df.corr().to_dict()
+                else:
+                    sheet_result = "Correlation requires at least two numeric columns."
             elif operation == "filter" or operation == "none":
                 sheet_result = filtered_df.head(10).to_dict('records')
             

@@ -1,9 +1,10 @@
 from app.services.orchestration import orchestrator
 import os
 
-def retrieve_csv(file_path: str, query: str):
+from typing import Optional
+
+def retrieve_csv(query: str, file_path: Optional[str] = None):
     """
-    Orchestrates the agentic RAG flow for CSV data.
+    Orchestrates the agentic RAG flow for CSV/Excel data, supporting multi-file routing.
     """
-    index_name = os.path.basename(file_path)
-    return orchestrator.run_pipeline(query, file_path, index_name)
+    return orchestrator.run_multi_file_pipeline(query, file_path)

@@ -8,7 +8,8 @@ class RouterAgent(BaseAgent):
     """
     def __init__(self):
         self.aggregation_keywords = [
-            "sum", "average", "avg", "total", "count", "max", "min", "mean", "median"
+            "sum", "average", "avg", "total", "count", "max", "min", "mean", "median",
+            "correlation", "corr", "relationship", "relate", "linked"
         ]
         self.lookup_keywords = [
             "id", "find", "search", "where", "details for"

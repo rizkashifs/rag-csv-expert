@@ -4,9 +4,10 @@ A disciplined, agentic RAG application specialized in complex CSV and Excel hand
 
 ## Features
 - **Multi-Format Support**: Robust handling of CSV and Excel (`.xlsx`, `.xls`) files, including multi-sheet workbooks.
-- **Deterministic Data Processing**: Uses Pandas for calculations (sums, averages, filters) across all sheets to eliminate LLM math hallucinations.
+- **Multi-File Intelligence**: Upload multiple files and let the system automatically route queries to the correct dataset using LLM-based file selection.
+- **Deterministic Data Processing**: Uses Pandas for calculations (sums, averages, filters, correlations) across all sheets to eliminate LLM math hallucinations.
 - **Agentic Routing**: Automatically routes questions to either a **CSV Engine** (for data/numbers) or a **Vector Engine** (for semantic/meaning based questions).
-- **Industrial Strength Ingestion**: Robust handling of CSV encodings, delimiters, and automated semantic data profiling.
+- **Industrial Strength Ingestion**: Robust handling of CSV encodings, delimiters, and automated semantic data profiling with LLM-generated summaries.
 - **Hybrid Embeddings**: Choose between **HuggingFace** (extremely fast, runs in Python) or **Ollama** for vector indexing.
 - **Local & Private**: Option to run entirely on your machine with Ollama.
 - **Enterprise Cloud Support**: Native integration with **Anthropic Claude** and **AWS Bedrock** (Converse API) for production workloads.
@@ -62,22 +63,36 @@ The API will be available at `http://127.0.0.1:8000`.
 
 ## API Usage
 - **Documentation**: Visit `http://127.0.0.1:8000/docs` for the interactive Swagger UI.
-- **Upload File**: `POST /api/upload` - Upload your CSV or Excel (`.xlsx`, `.xls`) file for indexing and profiling.
-- **Query**: `POST /api/query` - Ask questions about your data (e.g., "What is the average price?", "Explain the user feedback Trends").
-Example payload - 
-{
-  "query": "summarise the file",
-  "file_path": "data/netflix_titles.csv"
-}
+- **Upload File**: `POST /api/upload` - Upload your CSV or Excel (`.xlsx`, `.xls`) file for indexing, profiling, and automatic summarization.
+- **Query**: `POST /api/query` - Ask questions about your data.
+
+### Multi-File Routing
+The system supports intelligent routing across multiple uploaded files:
+- **With file_path**: Target a specific file explicitly
+  ```json
+  {
+    "query": "What is the average price?",
+    "file_path": "data/sales_2023.csv"
+  }
+  ```
+- **Without file_path**: Let the system automatically select the relevant file
+  ```json
+  {
+    "query": "How many employees were hired last year?"
+  }
+  ```
+  The **FileSelectorAgent** analyzes all uploaded file summaries and routes your query to the most relevant dataset.
 
 ## Architecture
-This project follows a Multi-Agent architecture:
-1. **Router Agent**: Classifies the question type.
-2. **Reasoning Agent**: Generates a valid JSON query plan.
-3. **Retriever Agent**: Executes the plan using **deterministic engines** (Pandas) or **semantic engines** (FAISS).
-4. **Answer Agent**: Synthesizes the final result into a human-readable explanation with 0 temperature.
+This project follows a Multi-Agent architecture with intelligent file routing:
+1. **File Selector Agent** (Optional): Determines which file to query based on LLM analysis of file summaries.
+2. **Router Agent**: Classifies the question type (aggregation, lookup, semantic).
+3. **Reasoning Agent**: Generates a valid JSON query plan with dataset context.
+4. **Retriever Agent**: Executes the plan using **deterministic engines** (Pandas) or **semantic engines** (FAISS).
+5. **Answer Agent**: Synthesizes the final result into a human-readable explanation with 0 temperature.
+6. **Summary Agent**: Generates contextual summaries of datasets for better query understanding.
 
-*Note: Agents can be easily switched between `ollama_client` and `anthropic_client` in the code.*
+*Note: All agents use a unified LLM client that supports Ollama, Anthropic, and AWS Bedrock.*
 
 For more details, read the DETAILED_README.md file.
 
