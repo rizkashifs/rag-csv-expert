@@ -3,7 +3,7 @@ import logging
 import re
 import pandas as pd
 import chardet
-from typing import Tuple, List, Dict, Any
+from typing import Tuple, List, Dict, Any, Iterable
 
 logger = logging.getLogger(__name__)
 
@@ -12,9 +12,67 @@ class IngestionService:
     Handles robust CSV and Excel loading, cleaning, and profiling.
     Supports multi-sheet Excel files.
     """
-    def _generate_data_profile(self, df: pd.DataFrame, sheet_name: str = None) -> str:
+    def is_text_heavy_csv(
+        self,
+        df: pd.DataFrame,
+        sample_size: int = 100,
+        avg_len_threshold: int = 100
+    ) -> bool:
+        for col in df.columns:
+            if df[col].dtype != object:
+                continue
+
+            sample = df[col].dropna().head(sample_size)
+            if sample.empty:
+                continue
+
+            avg_len = sample.map(lambda x: len(str(x))).mean()
+
+            if avg_len > avg_len_threshold:
+                return True
+
+        return False
+
+    def _split_text(self, text: str, max_len: int = 500) -> List[str]:
+        if not text:
+            return []
+        return [text[i:i + max_len] for i in range(0, len(text), max_len)]
+
+    def _detect_text_columns(self, df: pd.DataFrame) -> Tuple[bool, List[str]]:
+        text_columns = []
+        for col in df.columns:
+            if not pd.api.types.is_object_dtype(df[col]):
+                continue
+            series = df[col].dropna().astype(str)
+            if series.empty:
+                continue
+            lengths = series.str.len()
+            long_ratio = (lengths > 60).mean()
+            avg_len = lengths.mean()
+            if avg_len >= 80 or long_ratio >= 0.3:
+                text_columns.append(col)
+        return (len(text_columns) > 0), text_columns
+
+    def _chunk_text_columns(
+        self,
+        df: pd.DataFrame,
+        text_columns: Iterable[str],
+        row_prefix: str = ""
+    ) -> List[str]:
+        chunks = []
+        for idx, row in df.iterrows():
+            for col in text_columns:
+                value = str(row.get(col, "")).strip()
+                if not value or value.lower() == "n/a":
+                    continue
+                for chunk in self._split_text(value):
+                    chunk_text = f"{row_prefix}Row {idx} | {col}: {chunk}"
+                    chunks.append(chunk_text)
+        return chunks
+
+    def _generate_data_profile(self, df: pd.DataFrame, sheet_name: str = None) -> Dict[str, Any]:
         """Generates a semantic profile of the DataFrame."""
-        profile = {
+        profile: Dict[str, Any] = {
             "summary": {
                 "total_rows": len(df), 
                 "total_columns": len(df.columns),
@@ -37,14 +95,13 @@ class IngestionService:
             except Exception:
                 col_data["info"] = "Could not generate stats"
             profile["columns"][col] = col_data
-        return json.dumps(profile, indent=2)
+        return profile
 
-    def _format_profile_for_llm(self, profile_json: str) -> str:
+    def _format_profile_for_llm(self, profile: Dict[str, Any]) -> str:
         """Formats the profile for LLM context."""
-        data = json.loads(profile_json)
-        sheet_info = f" (Sheet: {data['summary']['sheet_name']})" if data['summary']['sheet_name'] else ""
-        lines = [f"Dataset{sheet_info}: {data['summary']['total_rows']} rows, {data['summary']['total_columns']} cols"]
-        for col, info in data["columns"].items():
+        sheet_info = f" (Sheet: {profile['summary']['sheet_name']})" if profile['summary']['sheet_name'] else ""
+        lines = [f"Dataset{sheet_info}: {profile['summary']['total_rows']} rows, {profile['summary']['total_columns']} cols"]
+        for col, info in profile["columns"].items():
             line = f"- {col} ({info['type']}): "
             if "min" in info:
                 line += f"Range [{info['min']} to {info['max']}]"
@@ -65,7 +122,16 @@ class IngestionService:
                 logger.info(f"Loading Excel file: {file_path}")
                 sheets = pd.read_excel(file_path, sheet_name=None)
                 all_profiles = []
+                metadata = {
+                    "type": "excel",
+                    "sheets": {},
+                    "text_heavy": False
+                }
                 cleaned_sheets = {}
+                all_text_chunks = []
+                text_heavy = False
+                text_columns = {}
+                sample_data = None
                 
                 for name, df in sheets.items():
                     # Cleaning
@@ -74,15 +140,40 @@ class IngestionService:
                     df.fillna("N/A", inplace=True)
                     cleaned_sheets[name] = df
                     
-                    profile_json = self._generate_data_profile(df, sheet_name=name)
-                    all_profiles.append(self._format_profile_for_llm(profile_json))
-                
+                    profile = self._generate_data_profile(df, sheet_name=name)
+                    all_profiles.append(self._format_profile_for_llm(profile))
+
+                    sheet_text_columns = self._detect_text_columns(df)[1]
+                    sheet_text_heavy = self.is_text_heavy_csv(df)
+                    text_heavy = text_heavy or sheet_text_heavy
+                    if sheet_text_columns:
+                        text_columns[name] = sheet_text_columns
+                        row_prefix = f"Sheet {name} | "
+                        all_text_chunks.extend(
+                            self._chunk_text_columns(df, sheet_text_columns, row_prefix=row_prefix)
+                        )
+
+                    metadata["sheets"][name] = {
+                        "profile": profile,
+                        "text_heavy": sheet_text_heavy
+                    }
+
+                    if sample_data is None:
+                        sample_data = df.head(5).to_markdown(index=False)
+
+                metadata["text_heavy"] = text_heavy
+
                 return {
                     "df": cleaned_sheets, # Dictionary of DataFrames
                     "type": "excel",
                     "sheets": list(cleaned_sheets.keys()),
                     "semantic_context": "\n\n".join(all_profiles),
-                    "row_count": sum(len(d) for d in cleaned_sheets.values())
+                    "row_count": sum(len(d) for d in cleaned_sheets.values()),
+                    "sample_data": sample_data or "",
+                    "text_heavy": text_heavy,
+                    "text_columns": text_columns,
+                    "text_chunks": all_text_chunks,
+                    "metadata": metadata
                 }
             else:
                 # Detect encoding
@@ -99,15 +190,29 @@ class IngestionService:
                 df.fillna("N/A", inplace=True)
 
                 # Profiling
-                profile_json = self._generate_data_profile(df)
-                semantic_context = self._format_profile_for_llm(profile_json)
+                profile = self._generate_data_profile(df)
+                semantic_context = self._format_profile_for_llm(profile)
+                sample_data = df.head(5).to_markdown(index=False)
+                text_heavy = self.is_text_heavy_csv(df)
+                text_columns = self._detect_text_columns(df)[1]
+                text_chunks = self._chunk_text_columns(df, text_columns) if text_heavy else []
+                metadata = {
+                    "type": "csv",
+                    "profile": profile,
+                    "text_heavy": text_heavy
+                }
                 
                 return {
                     "df": df, # Single DataFrame
                     "type": "csv",
                     "schema": df.columns.tolist(),
                     "semantic_context": semantic_context,
-                    "row_count": len(df)
+                    "row_count": len(df),
+                    "sample_data": sample_data,
+                    "text_heavy": text_heavy,
+                    "text_columns": text_columns,
+                    "text_chunks": text_chunks,
+                    "metadata": metadata
                 }
         except Exception as e:
             logger.error(f"Ingestion Error: {e}")
