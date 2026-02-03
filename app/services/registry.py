@@ -10,14 +10,25 @@ class FileRegistry:
     def __init__(self):
         self.files: Dict[str, Dict[str, Any]] = {}
 
-    def add_file(self, file_path: str, summary: str, row_count: int, data_type: str, schema_context: str):
+    def add_file(
+        self,
+        file_path: str,
+        summary: str,
+        row_count: int,
+        data_type: str,
+        schema_context: str,
+        semantic_summary: str,
+        text_heavy: bool
+    ):
         file_name = file_path.split("/")[-1]
         self.files[file_path] = {
             "file_name": file_name,
             "summary": summary,
             "row_count": row_count,
             "type": data_type,
-            "schema_context": schema_context
+            "schema_context": schema_context,
+            "semantic_summary": semantic_summary,
+            "text_heavy": text_heavy
         }
         logger.info(f"File added to registry: {file_path}")
 

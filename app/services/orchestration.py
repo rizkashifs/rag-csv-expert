@@ -27,22 +27,18 @@ class OrchestrationService:
         self.summary_agent = SummaryAgent()
         self.file_selector = FileSelectorAgent()
 
-    def register_data(self, file_path: str):
+    def register_data(self, file_path: str, data_bundle: Optional[Dict[str, Any]] = None):
         """
         Ingests and profiles a file, then adds it to the global registry.
         """
         logger.info(f"Registering file: {file_path}")
-        data_bundle = ingestion_service.load_data(file_path)
+        data_bundle = data_bundle or ingestion_service.load_data(file_path)
         df = data_bundle["df"]
         schema_context = data_bundle["semantic_context"]
+        text_heavy = data_bundle.get("text_heavy", False)
         
         # Generate summary
-        if isinstance(df, dict):
-            first_sheet = next(iter(df.values()))
-            sample_data = first_sheet.head(5).to_markdown()
-        else:
-            sample_data = df.head(5).to_markdown()
-
+        sample_data = data_bundle.get("sample_data") or ""
         file_summary = self.summary_agent.run({
             "schema_context": schema_context,
             "sample_data": sample_data
@@ -53,7 +49,9 @@ class OrchestrationService:
             summary=file_summary,
             row_count=data_bundle["row_count"],
             data_type=data_bundle.get("type", "csv"),
-            schema_context=schema_context
+            schema_context=schema_context,
+            semantic_summary=file_summary,
+            text_heavy=text_heavy
         )
         return file_summary
 
@@ -78,20 +76,17 @@ class OrchestrationService:
             file_summary = cached_info["summary"]
             row_count = cached_info["row_count"]
             data_type = cached_info["type"]
+            text_heavy = cached_info.get("text_heavy", False)
         else:
             data_bundle = ingestion_service.load_data(file_path)
             df = data_bundle["df"]
             schema_context = data_bundle["semantic_context"]
             row_count = data_bundle["row_count"]
             data_type = data_bundle.get("type", "csv")
+            text_heavy = data_bundle.get("text_heavy", False)
             
             # Generate summary if not in registry
-            if isinstance(df, dict):
-                first_sheet = next(iter(df.values()))
-                sample_data = first_sheet.head(5).to_markdown()
-            else:
-                sample_data = df.head(5).to_markdown()
-
+            sample_data = data_bundle.get("sample_data") or ""
             file_summary = self.summary_agent.run({
                 "schema_context": schema_context,
                 "sample_data": sample_data
@@ -102,41 +97,112 @@ class OrchestrationService:
         # 2. Routing
         logger.info(f"[2/5] Routing query...")
         route_start = time.time()
-        route_info = self.router.run({"query": query})
-        question_type = route_info["question_type"]
-        engine_type = route_info["engine"]
-        logger.info(f"Route: {question_type} -> {engine_type} ({time.time() - route_start:.2f}s)")
+        route_info = self.router.run({
+            "query": query,
+            "dataset_profile": schema_context,
+            "semantic_summary": file_summary,
+            "text_heavy": text_heavy
+        })
+        route = route_info["route"]
+        logger.info(f"Route selected: {route} ({time.time() - route_start:.2f}s)")
 
-        # 3. Reasoning (Intent)
+        if route == "REFUSE":
+            return {
+                "answer": (
+                    "I need a bit more detail to answer that. "
+                    "Please clarify what you want to know (e.g., which column, metric, time period, or filter). "
+                    "Here is the dataset profile to help you choose:\n\n"
+                    f"{schema_context}"
+                ),
+                "question_type": "clarify",
+                "intent": {},
+                "retrieved_data": [],
+                "file_summary": file_summary,
+                "metadata": {
+                    "execution_time": time.time() - start_time,
+                    "data_type": data_type,
+                    "row_count": row_count,
+                    "route": route
+                }
+            }
+
+        if route == "PROFILE_ONLY":
+            answer = (
+                "Here is the dataset profile and semantic summary:\n\n"
+                f"{schema_context}\n\nSummary:\n{file_summary}"
+            )
+            return {
+                "answer": answer,
+                "question_type": "profile_only",
+                "intent": {},
+                "retrieved_data": [],
+                "file_summary": file_summary,
+                "metadata": {
+                    "execution_time": time.time() - start_time,
+                    "data_type": data_type,
+                    "row_count": row_count,
+                    "route": route
+                }
+            }
+
+        if route == "TEXT_TABLE_RAG":
+            logger.info(f"[3/4] Retrieving text chunks from vector index...")
+            retrieve_start = time.time()
+            retrieved_data = vector_engine.search(query, index_name)
+            logger.info(f"Data retrieved in {time.time() - retrieve_start:.2f}s")
+
+            logger.info(f"[4/4] Synthesizing Answer...")
+            answer_start = time.time()
+            answer = self.answer.run({
+                "query": query,
+                "retrieved_data": retrieved_data,
+                "intent": {"operation": "semantic"},
+                "file_summary": file_summary
+            })
+            logger.info(f"Answer synthesized in {time.time() - answer_start:.2f}s")
+            total_time = time.time() - start_time
+            return {
+                "answer": answer,
+                "question_type": "semantic",
+                "intent": {"operation": "semantic"},
+                "retrieved_data": retrieved_data,
+                "file_summary": file_summary,
+                "metadata": {
+                    "execution_time": total_time,
+                    "data_type": data_type,
+                    "row_count": row_count,
+                    "route": route
+                }
+            }
+
+        # PANDAS route
         logger.info(f"[3/5] Reasoning (Intent Extraction)...")
         reason_start = time.time()
         intent = self.reasoning.run({
             "query": query,
             "schema_context": schema_context,
-            "file_summary": file_summary # Injecting file context
+            "file_summary": file_summary
         })
         logger.info(f"Intent extracted in {time.time() - reason_start:.2f}s")
 
-        # 4. Retrieval (Deterministic or Semantic)
-        logger.info(f"[4/5] Retrieving from {engine_type}...")
+        logger.info(f"[4/5] Retrieving via Pandas engine...")
         retrieve_start = time.time()
         retrieved_data = self.retriever.run({
             "query": query,
             "intent": intent,
             "df": df,
             "index_name": index_name,
-            "engine_type": engine_type
+            "engine_type": "csv_engine"
         })
         logger.info(f"Data retrieved in {time.time() - retrieve_start:.2f}s")
 
-        # 5. Answering
         logger.info(f"[5/5] Synthesizing Answer...")
         answer_start = time.time()
         answer = self.answer.run({
             "query": query,
             "retrieved_data": retrieved_data,
             "intent": intent,
-            "file_summary": file_summary # Injecting file context
+            "file_summary": file_summary
         })
         logger.info(f"Answer synthesized in {time.time() - answer_start:.2f}s")
 
@@ -145,14 +211,15 @@ class OrchestrationService:
 
         return {
             "answer": answer,
-            "question_type": question_type,
+            "question_type": "pandas",
             "intent": intent,
             "retrieved_data": retrieved_data,
             "file_summary": file_summary,
             "metadata": {
                 "execution_time": total_time,
                 "data_type": data_type,
-                "row_count": row_count
+                "row_count": row_count,
+                "route": route
             }
         }
 

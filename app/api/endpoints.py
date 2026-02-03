@@ -25,25 +25,18 @@ async def upload_file(file: UploadFile = File(...)):
     # 1. Ingest & Profile
     logger.info(f"Ingesting and profiling: {file.filename}")
     data_bundle = ingestion_service.load_data(file_path)
-    df_data = data_bundle["df"]
     
-    # 2. Index for Vector Search
+    # 2. Register with Orchestrator (Generates Summary & adds to Registry)
+    file_summary = orchestrator.register_data(file_path, data_bundle=data_bundle)
+
+    # 3. Index for Vector Search (Text-heavy only)
     logger.info("Preparing documents for vector indexing...")
     documents = []
-    
-    if data_bundle["type"] == "excel":
-        for sheet_name, df in df_data.items():
-            # Sample from each sheet
-            sample = df.head(50)
-            if not sample.empty:
-                # Add sheet name context to each document
-                sheet_docs = sample.to_markdown(index=False).split('\n')
-                documents.extend([f"[Sheet: {sheet_name}] {doc}" for doc in sheet_docs if doc.strip()])
+    if data_bundle.get("text_heavy"):
+        documents = data_bundle.get("text_chunks", [])
     else:
-        # CSV handling
-        sample_df = df_data.head(100)
-        documents = [doc for doc in sample_df.to_markdown(index=False).split('\n') if doc.strip()]
-    
+        documents = [f"{data_bundle['semantic_context']}\n\nSummary:\n{file_summary}"]
+
     logger.info(f"Creating vector index with {len(documents)} document chunks...")
     try:
         vector_engine.create_index(documents, index_name=file.filename)
@@ -51,16 +44,14 @@ async def upload_file(file: UploadFile = File(...)):
         logger.error(f"Vector Indexing Error: {e}")
         raise HTTPException(status_code=503, detail=f"Embedding/Indexing failed: {str(e)}")
     
-    # 3. Register with Orchestrator (Generates Summary & adds to Registry)
-    file_summary = orchestrator.register_data(file_path)
-    
     return {
         "message": "File processed and registered successfully",
         "file_path": file_path,
         "type": data_bundle["type"],
         "row_count": data_bundle["row_count"],
         "summary": file_summary,
-        "indexed_chunks": len(documents)
+        "indexed_chunks": len(documents),
+        "text_heavy": data_bundle.get("text_heavy", False)
     }
 
 @router.post("/query", response_model=QueryResponse)
