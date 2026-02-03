@@ -17,8 +17,8 @@ class SummaryAgent(BaseAgent):
         sample_data = input_data.get("sample_data")
         
         prompt = f"""
-        Provide a concise, professional summary of the following dataset. 
-        Describe what the file appears to be about and what kind of information it contains.
+        Provide a concise, professional summary of the following dataset.
+        Focus on the semantic meaning you can infer from the first 5 rows and schema.
 
         Schema & Profiling:
         {schema_context}
