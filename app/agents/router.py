@@ -18,9 +18,6 @@ class RouterAgent(BaseAgent):
         self.profile_keywords = [
             "schema", "columns", "fields", "profile", "overview", "summary"
         ]
-        self.refuse_keywords = [
-            "password", "secret", "social security", "credit card", "ssn"
-        ]
         self.logger = logging.getLogger(__name__)
 
     def run(self, input_data: dict) -> dict:
@@ -33,10 +30,6 @@ class RouterAgent(BaseAgent):
         semantic_summary = input_data.get("semantic_summary", "")
         text_heavy = input_data.get("text_heavy", False)
 
-        for kw in self.refuse_keywords:
-            if kw in query:
-                return {"route": "REFUSE"}
-
         prompt = f"""
         You are a routing classifier for a CSV/Excel RAG system.
         Decide the best route based on the user query and dataset context.
@@ -44,7 +37,7 @@ class RouterAgent(BaseAgent):
         - PROFILE_ONLY: user wants schema/profile/summary info only.
         - TEXT_TABLE_RAG: user wants semantic meaning from text-heavy columns.
         - PANDAS: user needs calculations, aggregations, filters, or exact values.
-        - REFUSE: query is unsafe or unrelated to the data.
+        - REFUSE: query is unclear, missing details, or not supported by the dataset.
 
         Dataset Profile:
         {dataset_profile}

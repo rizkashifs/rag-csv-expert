@@ -108,8 +108,13 @@ class OrchestrationService:
 
         if route == "REFUSE":
             return {
-                "answer": "I can't help with that request. Please ask about the uploaded dataset.",
-                "question_type": "refuse",
+                "answer": (
+                    "I need a bit more detail to answer that. "
+                    "Please clarify what you want to know (e.g., which column, metric, time period, or filter). "
+                    "Here is the dataset profile to help you choose:\n\n"
+                    f"{schema_context}"
+                ),
+                "question_type": "clarify",
                 "intent": {},
                 "retrieved_data": [],
                 "file_summary": file_summary,
