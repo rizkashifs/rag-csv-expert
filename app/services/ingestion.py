@@ -38,6 +38,9 @@ class IngestionService:
             return []
         return [text[i:i + max_len] for i in range(0, len(text), max_len)]
 
+    def _sanitize_chunk_id_value(self, value: Any) -> str:
+        return str(value).replace("|", "_")
+
     def _detect_text_columns(self, df: pd.DataFrame) -> Tuple[bool, List[str]]:
         text_columns = []
         for col in df.columns:
@@ -57,18 +60,47 @@ class IngestionService:
         self,
         df: pd.DataFrame,
         text_columns: Iterable[str],
-        row_prefix: str = ""
-    ) -> List[str]:
-        chunks = []
-        for idx, row in df.iterrows():
-            for col in text_columns:
-                value = str(row.get(col, "")).strip()
-                if not value or value.lower() == "n/a":
-                    continue
-                for chunk in self._split_text(value):
-                    chunk_text = f"{row_prefix}Row {idx} | {col}: {chunk}"
-                    chunks.append(chunk_text)
-        return chunks
+        row_prefix: str = "",
+        sheet_name: str = ""
+    ) -> Tuple[List[str], List[Dict[str, Any]]]:
+        chunks: List[str] = []
+        structured_chunks: List[Dict[str, Any]] = []
+        text_columns = list(text_columns)
+        if not text_columns:
+            return chunks, structured_chunks
+
+        stacked = df.loc[:, text_columns].stack(dropna=True)
+        if stacked.empty:
+            return chunks, structured_chunks
+
+        values = stacked.astype(str).str.strip()
+        values = values[(values != "") & (values.str.lower() != "n/a")]
+
+        sheet_id = self._sanitize_chunk_id_value(sheet_name) if sheet_name else ""
+        for (row_idx, col), value in values.items():
+            row_id = self._sanitize_chunk_id_value(row_idx)
+            col_id = self._sanitize_chunk_id_value(col)
+            for chunk_index, chunk in enumerate(self._split_text(value)):
+                chunk_id_parts = []
+                if sheet_id:
+                    chunk_id_parts.append(f"sheet:{sheet_id}")
+                chunk_id_parts.append(f"row:{row_id}")
+                chunk_id_parts.append(f"col:{col_id}")
+                chunk_id_parts.append(f"chunk:{chunk_index}")
+                chunk_id = "|".join(chunk_id_parts)
+                chunk_text = f"{row_prefix}Chunk {chunk_id} | Row {row_idx} | {col}: {chunk}"
+                chunks.append(chunk_text)
+                structured_chunks.append(
+                    {
+                        "chunk_id": chunk_id,
+                        "sheet": sheet_name or None,
+                        "row": row_idx,
+                        "column": col,
+                        "chunk_index": chunk_index,
+                        "text": chunk
+                    }
+                )
+        return chunks, structured_chunks
 
     def _generate_data_profile(self, df: pd.DataFrame, sheet_name: str = None) -> Dict[str, Any]:
         """Generates a semantic profile of the DataFrame."""
@@ -129,6 +161,7 @@ class IngestionService:
                 }
                 cleaned_sheets = {}
                 all_text_chunks = []
+                all_structured_chunks: List[Dict[str, Any]] = []
                 text_heavy = False
                 text_columns = {}
                 sample_data = None
@@ -143,15 +176,23 @@ class IngestionService:
                     profile = self._generate_data_profile(df, sheet_name=name)
                     all_profiles.append(self._format_profile_for_llm(profile))
 
-                    sheet_text_columns = self._detect_text_columns(df)[1]
                     sheet_text_heavy = self.is_text_heavy_csv(df)
                     text_heavy = text_heavy or sheet_text_heavy
-                    if sheet_text_columns:
+                    if sheet_text_heavy:
+                        sheet_text_columns = self._detect_text_columns(df)[1]
+                    else:
+                        sheet_text_columns = []
+                    if sheet_text_heavy and sheet_text_columns:
                         text_columns[name] = sheet_text_columns
                         row_prefix = f"Sheet {name} | "
-                        all_text_chunks.extend(
-                            self._chunk_text_columns(df, sheet_text_columns, row_prefix=row_prefix)
+                        sheet_chunks, sheet_structured = self._chunk_text_columns(
+                            df,
+                            sheet_text_columns,
+                            row_prefix=row_prefix,
+                            sheet_name=name
                         )
+                        all_text_chunks.extend(sheet_chunks)
+                        all_structured_chunks.extend(sheet_structured)
 
                     metadata["sheets"][name] = {
                         "profile": profile,
@@ -173,6 +214,7 @@ class IngestionService:
                     "text_heavy": text_heavy,
                     "text_columns": text_columns,
                     "text_chunks": all_text_chunks,
+                    "structured_chunks": all_structured_chunks,
                     "metadata": metadata
                 }
             else:
@@ -195,7 +237,10 @@ class IngestionService:
                 sample_data = df.head(5).to_markdown(index=False)
                 text_heavy = self.is_text_heavy_csv(df)
                 text_columns = self._detect_text_columns(df)[1]
-                text_chunks = self._chunk_text_columns(df, text_columns) if text_heavy else []
+                if text_heavy:
+                    text_chunks, structured_chunks = self._chunk_text_columns(df, text_columns)
+                else:
+                    text_chunks, structured_chunks = [], []
                 metadata = {
                     "type": "csv",
                     "profile": profile,
@@ -212,6 +257,7 @@ class IngestionService:
                     "text_heavy": text_heavy,
                     "text_columns": text_columns,
                     "text_chunks": text_chunks,
+                    "structured_chunks": structured_chunks,
                     "metadata": metadata
                 }
         except Exception as e:
