@@ -58,6 +58,38 @@ class RouterAgent(BaseAgent):
             "group_by": [],
         }
 
+    def _is_contextual_follow_up(self, query: str) -> bool:
+        normalized = query.strip().lower()
+        if not normalized:
+            return False
+
+        follow_up_markers = (
+            "and ",
+            "also ",
+            "what about",
+            "how about",
+            "same",
+            "that",
+            "those",
+            "them",
+            "it",
+            "for those",
+            "for that",
+            "by ",
+        )
+        is_short = len(normalized.split()) <= 8
+        return is_short and any(normalized.startswith(marker) for marker in follow_up_markers)
+
+    def _build_history_aware_query(self, raw_query: str, history: List[Dict[str, str]]) -> str:
+        if not history or not self._is_contextual_follow_up(raw_query):
+            return raw_query
+
+        last_user_query = history[-1].get("user", "").strip()
+        if not last_user_query:
+            return raw_query
+
+        return f"{last_user_query} {raw_query}".strip()
+
     def run(self, input_data: dict) -> dict:
         raw_query = input_data.get("query", "")
         query = raw_query.lower()
@@ -69,6 +101,7 @@ class RouterAgent(BaseAgent):
         history_text = "\n".join(
             [f"User: {turn.get('user', '')}\nAssistant: {turn.get('assistant', '')}" for turn in history[-5:]]
         )
+        history_aware_query = self._build_history_aware_query(raw_query, history)
 
         for kw in self.profile_keywords:
             if re.search(r"\b" + kw + r"\b", query):
@@ -78,7 +111,7 @@ class RouterAgent(BaseAgent):
                     "schema": {"operation": "profile", "columns": [], "filters": [], "group_by": []},
                 }
 
-        keyword_intent = self._keyword_intent(raw_query)
+        keyword_intent = self._keyword_intent(history_aware_query)
         if keyword_intent["operation"] != "none":
             return {
                 "route": "KEYWORD_ENGINE",
