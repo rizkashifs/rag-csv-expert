@@ -8,10 +8,11 @@ from app.agents.retriever import CSVRetrieverAgent
 from app.agents.answer import AnswerAgent
 from app.agents.file_selector import FileSelectorAgent
 from app.agents.summary import SummaryAgent
+from app.agents.refusal import RefusalAgent
 from app.services.registry import file_registry
 from app.services.ingestion import ingestion_service
 from app.engines.vector_engine import vector_engine
-import pandas as pd
+from app.services.history import get_history, history_service
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ class OrchestrationService:
         self.answer = AnswerAgent()
         self.summary_agent = SummaryAgent()
         self.file_selector = FileSelectorAgent()
+        self.refusal_agent = RefusalAgent()
 
     def register_data(self, file_path: str, data_bundle: Optional[Dict[str, Any]] = None):
         """
@@ -55,7 +57,7 @@ class OrchestrationService:
         )
         return file_summary
 
-    def run_pipeline(self, query: str, file_path: str, index_name: str) -> Dict[str, Any]:
+    def run_pipeline(self, query: str, file_path: str, index_name: str, chat_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Executes the full agentic RAG pipeline.
         """
@@ -101,28 +103,31 @@ class OrchestrationService:
             "query": query,
             "dataset_profile": schema_context,
             "semantic_summary": file_summary,
-            "text_heavy": text_heavy
+            "text_heavy": text_heavy,
+            "history": get_history(chat_id)
         })
         route = route_info["route"]
+        route_schema = route_info.get("schema", {})
+        use_routing_agent = route_info.get("use_routing_agent", False)
         logger.info(f"Route selected: {route} ({time.time() - route_start:.2f}s)")
 
         if route == "REFUSE":
+            answer = self.refusal_agent.run({"schema_context": schema_context})
+            if chat_id:
+                history_service.add_turn(chat_id, query, answer)
             return {
-                "answer": (
-                    "I need a bit more detail to answer that. "
-                    "Please clarify what you want to know (e.g., which column, metric, time period, or filter). "
-                    "Here is the dataset profile to help you choose:\n\n"
-                    f"{schema_context}"
-                ),
+                "answer": answer,
                 "question_type": "clarify",
-                "intent": {},
+                "intent": route_schema or {},
                 "retrieved_data": [],
                 "file_summary": file_summary,
                 "metadata": {
                     "execution_time": time.time() - start_time,
                     "data_type": data_type,
                     "row_count": row_count,
-                    "route": route
+                    "route": route,
+                    "use_routing_agent": use_routing_agent,
+                    "route_schema": route_schema
                 }
             }
 
@@ -131,17 +136,21 @@ class OrchestrationService:
                 "Here is the dataset profile and semantic summary:\n\n"
                 f"{schema_context}\n\nSummary:\n{file_summary}"
             )
+            if chat_id:
+                history_service.add_turn(chat_id, query, answer)
             return {
                 "answer": answer,
                 "question_type": "profile_only",
-                "intent": {},
+                "intent": route_schema or {},
                 "retrieved_data": [],
                 "file_summary": file_summary,
                 "metadata": {
                     "execution_time": time.time() - start_time,
                     "data_type": data_type,
                     "row_count": row_count,
-                    "route": route
+                    "route": route,
+                    "use_routing_agent": use_routing_agent,
+                    "route_schema": route_schema
                 }
             }
 
@@ -156,43 +165,47 @@ class OrchestrationService:
             answer = self.answer.run({
                 "query": query,
                 "retrieved_data": retrieved_data,
-                "intent": {"operation": "semantic"},
+                "intent": route_schema or {"operation": "semantic"},
                 "file_summary": file_summary
             })
             logger.info(f"Answer synthesized in {time.time() - answer_start:.2f}s")
             total_time = time.time() - start_time
+            if chat_id:
+                history_service.add_turn(chat_id, query, answer)
             return {
                 "answer": answer,
                 "question_type": "semantic",
-                "intent": {"operation": "semantic"},
+                "intent": route_schema or {"operation": "semantic"},
                 "retrieved_data": retrieved_data,
                 "file_summary": file_summary,
                 "metadata": {
                     "execution_time": total_time,
                     "data_type": data_type,
                     "row_count": row_count,
-                    "route": route
+                    "route": route,
+                    "use_routing_agent": use_routing_agent,
+                    "route_schema": route_schema
                 }
             }
 
-        # PANDAS route
+        # SQL/KEYWORD engine route
         logger.info(f"[3/5] Reasoning (Intent Extraction)...")
         reason_start = time.time()
-        intent = self.reasoning.run({
+        intent = route_schema or self.reasoning.run({
             "query": query,
             "schema_context": schema_context,
             "file_summary": file_summary
         })
         logger.info(f"Intent extracted in {time.time() - reason_start:.2f}s")
 
-        logger.info(f"[4/5] Retrieving via Pandas engine...")
+        logger.info(f"[4/5] Retrieving via SQL Engine...")
         retrieve_start = time.time()
         retrieved_data = self.retriever.run({
             "query": query,
-            "intent": intent,
+            "intent": route_schema or intent,
             "df": df,
             "index_name": index_name,
-            "engine_type": "csv_engine"
+            "engine_type": "sql_engine"
         })
         logger.info(f"Data retrieved in {time.time() - retrieve_start:.2f}s")
 
@@ -201,29 +214,33 @@ class OrchestrationService:
         answer = self.answer.run({
             "query": query,
             "retrieved_data": retrieved_data,
-            "intent": intent,
+            "intent": route_schema or intent,
             "file_summary": file_summary
         })
         logger.info(f"Answer synthesized in {time.time() - answer_start:.2f}s")
 
         total_time = time.time() - start_time
         logger.info(f"=== Pipeline Finished in {total_time:.2f}s ===")
+        if chat_id:
+            history_service.add_turn(chat_id, query, answer)
 
         return {
             "answer": answer,
-            "question_type": "pandas",
-            "intent": intent,
+            "question_type": "keyword_engine" if route == "KEYWORD_ENGINE" else "sql_engine",
+            "intent": route_schema or intent,
             "retrieved_data": retrieved_data,
             "file_summary": file_summary,
             "metadata": {
                 "execution_time": total_time,
                 "data_type": data_type,
                 "row_count": row_count,
-                "route": route
+                "route": route,
+                "use_routing_agent": use_routing_agent,
+                "route_schema": route_schema
             }
         }
 
-    def run_multi_file_pipeline(self, query: str, file_path: Optional[str] = None) -> Dict[str, Any]:
+    def run_multi_file_pipeline(self, query: str, file_path: Optional[str] = None, chat_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Determines the correct file from the registry if not provided, then runs the pipeline.
         """
@@ -244,7 +261,7 @@ class OrchestrationService:
             file_path = selected_files[0] # Pick the first relevant one for now
             logger.info(f"FileSelectorAgent selected: {file_path}")
 
-        return self.run_pipeline(query, file_path, os.path.basename(file_path))
+        return self.run_pipeline(query, file_path, os.path.basename(file_path), chat_id=chat_id)
 
 # Singleton
 orchestrator = OrchestrationService()

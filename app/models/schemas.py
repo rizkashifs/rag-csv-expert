@@ -4,6 +4,7 @@ from typing import List, Optional
 class QueryRequest(BaseModel):
     query: str
     file_path: Optional[str] = None
+    chat_id: Optional[str] = None
 
 class QueryResponse(BaseModel):
     answer: str

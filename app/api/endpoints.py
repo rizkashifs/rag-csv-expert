@@ -58,7 +58,7 @@ async def upload_file(file: UploadFile = File(...)):
 async def query_rag(request: QueryRequest):
     logger.info(f"Query request received. Target file: {request.file_path or 'Auto-Detect'}")
     
-    result = retrieve_csv(request.query, request.file_path)
+    result = retrieve_csv(request.query, request.file_path, request.chat_id)
     logger.info("Query processing complete.")
     
     # Ensure context is a list of strings as expected by QueryResponse
