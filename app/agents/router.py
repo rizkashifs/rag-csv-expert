@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 
 from app.agents.base import BaseAgent
 from app.models.llm_client import llm_client
+from app.services.history import get_history
 from app.utils.routing_keywords import PROFILE_KEYWORDS, SIMPLE_INTENT_PATTERNS
 
 
@@ -96,7 +97,11 @@ class RouterAgent(BaseAgent):
         dataset_profile = input_data.get("dataset_profile", "")
         semantic_summary = input_data.get("semantic_summary", "")
         text_heavy = input_data.get("text_heavy", False)
-        history = input_data.get("history", [])
+        chat_id = input_data.get("chat_id")
+        history = input_data.get("history")
+        if history is None and chat_id:
+            history = get_history(chat_id)
+        history = history or []
 
         history_text = "\n".join(
             [f"User: {turn.get('user', '')}\nAssistant: {turn.get('assistant', '')}" for turn in history[-5:]]
