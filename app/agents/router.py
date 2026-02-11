@@ -68,28 +68,6 @@ class RouterAgent(BaseAgent):
 
 
 
-    def _is_contextual_follow_up(self, query: str) -> bool:
-        normalized = query.strip().lower()
-        if not normalized:
-            return False
-        follow_up_markers = (
-            "and ",
-            "also ",
-            "what about",
-            "how about",
-            "same",
-            "that",
-            "those",
-            "them",
-            "it",
-            "for those",
-            "for that",
-            "by ",
-        )
-        return len(normalized.split()) <= 8 and any(normalized.startswith(marker) for marker in follow_up_markers)
-
-    
-    
 
 
 
@@ -279,10 +257,9 @@ Return ONLY valid JSON using this schema:
         history_text = "\n".join(
             [f"User: {turn.get('user', '')}\nAssistant: {turn.get('assistant', '')}" for turn in history[-5:]]
         )
-        history_aware_query = self._build_history_aware_query(raw_query, history)
 
         # Direct LLM call - No Regex Fast Path
-        prompt = self._build_llm_prompt(history_aware_query, dataset_profile, semantic_summary, history_text, text_heavy)
+        prompt = self._build_llm_prompt(raw_query, dataset_profile, semantic_summary, history_text, text_heavy)
         try:
             response = llm_client.generate([{"role": "user", "content": prompt}], options={"temperature": 0.0})
             
@@ -298,7 +275,7 @@ Return ONLY valid JSON using this schema:
             
             if route in self.ROUTES:
                 normalized = self._normalize_schema(route, parsed.get("schema", {}), raw_query)
-                refused = self._should_refuse(route, normalized, history_aware_query)
+                refused = self._should_refuse(route, normalized, raw_query)
                 return refused or {"route": route, "use_routing_agent": True, "schema": normalized}
         except Exception as e:
             self.logger.error(f"Router LLM failed: {e}") 
