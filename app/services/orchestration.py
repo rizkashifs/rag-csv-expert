@@ -112,7 +112,7 @@ class OrchestrationService:
         logger.info(f"Route selected: {route} ({time.time() - route_start:.2f}s)")
 
         if route == "REFUSE":
-            answer = self.refusal_agent.run({"schema_context": schema_context})
+            answer = self.refusal_agent.run({"schema_context": schema_context, "route_schema": route_schema})
             if chat_id:
                 history_service.add_turn(chat_id, query, answer)
             return {

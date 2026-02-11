@@ -13,6 +13,7 @@ class RouterAgent(BaseAgent):
     """Route user queries to the best engine and return a structured route schema."""
 
     ROUTES = {"PROFILE_ONLY", "TEXT_TABLE_RAG", "SQL_ENGINE", "KEYWORD_ENGINE", "REFUSE"}
+    OPERATIONS_REQUIRING_COLUMN = {"sum", "avg", "max", "min", "correlation"}
 
     def __init__(self):
         self.simple_intent_patterns = SIMPLE_INTENT_PATTERNS
@@ -112,7 +113,6 @@ class RouterAgent(BaseAgent):
 
     def _extract_group_by(self, query: str) -> List[str]:
         groups: List[str] = []
-
         by_match = re.search(r"\bby\s+([a-zA-Z_][a-zA-Z0-9_]*)", query, re.IGNORECASE)
         if by_match:
             groups.append(by_match.group(1))
@@ -146,12 +146,10 @@ class RouterAgent(BaseAgent):
             "max": ["max", "highest", "largest"],
             "min": ["min", "lowest", "smallest"],
         }
-
         aggregations: List[Dict[str, str]] = []
         for function, words in aliases.items():
             if any(re.search(rf"\b{re.escape(word)}\b", query, re.IGNORECASE) for word in words):
                 aggregations.append({"function": function, "column": columns[0] if columns else "*"})
-
         return aggregations[:2]
 
     def _looks_semantic(self, query: str) -> bool:
@@ -193,14 +191,12 @@ class RouterAgent(BaseAgent):
             score += 1
         if any(re.search(pattern, query, re.IGNORECASE) for pattern in complexity_patterns):
             score += 1
-
         return score >= 2
 
     def _is_contextual_follow_up(self, query: str) -> bool:
         normalized = query.strip().lower()
         if not normalized:
             return False
-
         follow_up_markers = (
             "and ",
             "also ",
@@ -220,7 +216,6 @@ class RouterAgent(BaseAgent):
     def _build_history_aware_query(self, raw_query: str, history: List[Dict[str, str]]) -> str:
         if not history or not self._is_contextual_follow_up(raw_query):
             return raw_query
-
         last_user_query = history[-1].get("user", "").strip()
         return f"{last_user_query} {raw_query}".strip() if last_user_query else raw_query
 
@@ -271,6 +266,82 @@ class RouterAgent(BaseAgent):
         )
         return schema
 
+    def _sync_sql_schema_layers(self, normalized: Dict[str, Any]) -> Dict[str, Any]:
+        sql_plan = normalized.get("sql_plan") or {}
+
+        # Pull nested plan fields up for the SQL executor, then push normalized values back down.
+        if not normalized.get("columns"):
+            normalized["columns"] = list(sql_plan.get("target_columns") or [])
+        if not normalized.get("filters"):
+            normalized["filters"] = list(sql_plan.get("filters") or [])
+        if not normalized.get("group_by"):
+            normalized["group_by"] = list(sql_plan.get("group_by") or [])
+        if not normalized.get("aggregations"):
+            normalized["aggregations"] = list(sql_plan.get("aggregations") or [])
+        if not normalized.get("sort"):
+            normalized["sort"] = list(sql_plan.get("order_by") or [])
+        if normalized.get("limit") is None and sql_plan.get("limit") is not None:
+            normalized["limit"] = sql_plan.get("limit")
+
+        sql_plan["target_columns"] = normalized.get("columns", [])
+        sql_plan["filters"] = normalized.get("filters", [])
+        sql_plan["group_by"] = normalized.get("group_by", [])
+        sql_plan["aggregations"] = normalized.get("aggregations", [])
+        sql_plan["order_by"] = normalized.get("sort", [])
+        sql_plan["limit"] = normalized.get("limit")
+        sql_plan.setdefault("having", [])
+        normalized["sql_plan"] = sql_plan
+        return normalized
+
+    def _build_refusal_schema(self, reason: str, follow_up_questions: List[str]) -> Dict[str, Any]:
+        schema = self._normalize_schema("REFUSE", {"operation": "none", "confidence": 0.35}, "")
+        schema.update({"reason": reason, "follow_up_questions": follow_up_questions})
+        return schema
+
+    def _clarification_questions_for_schema(self, schema: Dict[str, Any]) -> List[str]:
+        operation = (schema.get("operation") or "none").lower()
+        questions = []
+        if operation in self.OPERATIONS_REQUIRING_COLUMN and not schema.get("columns"):
+            questions.append("Which numeric column should I use for this calculation?")
+        if operation == "correlation" and len(schema.get("columns", [])) < 2:
+            questions.append("Please specify two numeric columns to compute correlation.")
+        return questions
+
+    def _should_refuse(self, route: str, schema: Dict[str, Any], query: str) -> Optional[Dict[str, Any]]:
+        if route not in {"SQL_ENGINE", "KEYWORD_ENGINE", "TEXT_TABLE_RAG"}:
+            return None
+
+        operation = (schema.get("operation") or "none").lower()
+        if route in {"SQL_ENGINE", "KEYWORD_ENGINE"}:
+            questions = self._clarification_questions_for_schema(schema)
+            if operation == "none":
+                questions.append("Do you want a sum, average, count, min/max, or filtered rows?")
+
+            has_filter_language = bool(re.search(r"\bwhere\b|\bfilter\b|\bgreater than\b|\bless than\b|>=|<=|!=|=|>|<", query, re.IGNORECASE))
+            if has_filter_language and not schema.get("filters"):
+                questions.append("What exact filter condition should I apply (column, operator, value)?")
+
+            if questions:
+                return {
+                    "route": "REFUSE",
+                    "use_routing_agent": True,
+                    "schema": self._build_refusal_schema("insufficient_structured_intent", questions),
+                }
+
+        if route == "TEXT_TABLE_RAG":
+            semantic_plan = schema.get("semantic_plan") or {}
+            if not semantic_plan.get("query_text"):
+                return {
+                    "route": "REFUSE",
+                    "use_routing_agent": True,
+                    "schema": self._build_refusal_schema(
+                        "missing_semantic_query",
+                        ["What text meaning or theme should I search for in the rows?"],
+                    ),
+                }
+
+        return None
+
     def _normalize_schema(self, route: str, schema: Dict[str, Any], raw_query: str) -> Dict[str, Any]:
         if route == "TEXT_TABLE_RAG":
             normalized = self._semantic_schema()
@@ -284,15 +355,7 @@ class RouterAgent(BaseAgent):
             operation = (schema or {}).get("operation", "profile" if route == "PROFILE_ONLY" else "none")
             normalized = self._sql_schema(operation)
             normalized.update(schema or {})
-            sql_plan = normalized.get("sql_plan") or {}
-            sql_plan.setdefault("target_columns", normalized.get("columns", []))
-            sql_plan.setdefault("aggregations", normalized.get("aggregations", []))
-            sql_plan.setdefault("filters", normalized.get("filters", []))
-            sql_plan.setdefault("group_by", normalized.get("group_by", []))
-            sql_plan.setdefault("order_by", normalized.get("sort", []))
-            sql_plan.setdefault("limit", normalized.get("limit"))
-            normalized["sql_plan"] = sql_plan
-            return normalized
+            return self._sync_sql_schema_layers(normalized)
 
         return schema or self._base_schema()
 
@@ -313,7 +376,7 @@ Routes:
 - TEXT_TABLE_RAG: semantic search or natural-language matching over text-heavy fields.
 - KEYWORD_ENGINE: simple single-step analytics.
 - SQL_ENGINE: complex analytics (aggregations + filters/grouping/sorting/comparisons).
-- REFUSE: ambiguous or unrelated query.
+- REFUSE: ambiguous or unanswerable query. If details are missing, return REFUSE with follow_up_questions.
 
 Dataset Profile:
 {dataset_profile}
@@ -357,7 +420,9 @@ Return ONLY valid JSON using this schema:
       "top_k": 8,
       "min_similarity": null,
       "post_filters": []
-    }}
+    }},
+    "reason": "optional reason for refusal",
+    "follow_up_questions": ["optional clarifying question"]
   }}
 }}
 """.strip()
@@ -388,17 +453,20 @@ Return ONLY valid JSON using this schema:
         if keyword_intent["operation"] != "none":
             schema = self._build_keyword_schema(history_aware_query, keyword_intent)
             route = "SQL_ENGINE" if schema["engine_mode"] == "sql" else "KEYWORD_ENGINE"
-            return {"route": route, "use_routing_agent": True, "schema": self._normalize_schema(route, schema, raw_query)}
+            refused = self._should_refuse(route, schema, history_aware_query)
+            return refused or {"route": route, "use_routing_agent": True, "schema": self._normalize_schema(route, schema, raw_query)}
 
         if text_heavy and self._looks_semantic(history_aware_query):
             semantic_schema = self._semantic_schema()
             semantic_schema["confidence"] = 0.8
             semantic_schema["semantic_plan"]["query_text"] = raw_query
-            return {
+            route_payload = {
                 "route": "TEXT_TABLE_RAG",
                 "use_routing_agent": True,
                 "schema": self._normalize_schema("TEXT_TABLE_RAG", semantic_schema, raw_query),
             }
+            refused = self._should_refuse(route_payload["route"], route_payload["schema"], history_aware_query)
+            return refused or route_payload
 
         prompt = self._build_llm_prompt(raw_query, dataset_profile, semantic_summary, history_text, text_heavy)
         try:
@@ -406,8 +474,9 @@ Return ONLY valid JSON using this schema:
             parsed = json.loads(response.strip())
             route = parsed.get("route", "").upper().strip()
             if route in self.ROUTES:
-                schema = self._normalize_schema(route, parsed.get("schema", {}), raw_query)
-                return {"route": route, "use_routing_agent": True, "schema": schema}
+                normalized = self._normalize_schema(route, parsed.get("schema", {}), raw_query)
+                refused = self._should_refuse(route, normalized, history_aware_query)
+                return refused or {"route": route, "use_routing_agent": True, "schema": normalized}
         except Exception:
             self.logger.info("Router LLM failed, using fallback rules.")
 
@@ -424,5 +493,11 @@ Return ONLY valid JSON using this schema:
         return {
             "route": "REFUSE",
             "use_routing_agent": True,
-            "schema": self._normalize_schema("REFUSE", {"operation": "none", "confidence": 0.4}, raw_query),
+            "schema": self._build_refusal_schema(
+                "unable_to_route_with_confidence",
+                [
+                    "Could you clarify which metric/column you want?",
+                    "Should I apply any filters such as region/date/value thresholds?",
+                ],
+            ),
         }
