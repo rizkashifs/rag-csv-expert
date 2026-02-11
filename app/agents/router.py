@@ -10,7 +10,7 @@ from app.services.history import get_history
 class RouterAgent(BaseAgent):
     """Route user queries to the best engine and return a structured route schema."""
 
-    ROUTES = {"PROFILE_ONLY", "TEXT_TABLE_RAG", "SQL_ENGINE", "KEYWORD_ENGINE", "REFUSE"}
+    ROUTES = {"PROFILE_ONLY", "TEXT_TABLE_RAG", "SQL_ENGINE", "REFUSE"}
     OPERATIONS_REQUIRING_COLUMN = {"sum", "avg", "max", "min", "correlation"}
 
     def __init__(self):
@@ -137,11 +137,11 @@ class RouterAgent(BaseAgent):
         return questions
 
     def _should_refuse(self, route: str, schema: Dict[str, Any], query: str) -> Optional[Dict[str, Any]]:
-        if route not in {"SQL_ENGINE", "KEYWORD_ENGINE", "TEXT_TABLE_RAG"}:
+        if route not in {"SQL_ENGINE", "TEXT_TABLE_RAG"}:
             return None
 
         operation = (schema.get("operation") or "none").lower()
-        if route in {"SQL_ENGINE", "KEYWORD_ENGINE"}:
+        if route == "SQL_ENGINE":
             questions = self._clarification_questions_for_schema(schema)
             if operation == "none":
                 questions.append("Do you want a sum, average, count, min/max, or filtered rows?")
@@ -180,7 +180,7 @@ class RouterAgent(BaseAgent):
             normalized["semantic_plan"] = semantic_plan
             return normalized
 
-        if route in {"KEYWORD_ENGINE", "SQL_ENGINE", "PROFILE_ONLY", "REFUSE"}:
+        if route in {"SQL_ENGINE", "PROFILE_ONLY", "REFUSE"}:
             operation = (schema or {}).get("operation", "profile" if route == "PROFILE_ONLY" else "none")
             normalized = self._sql_schema(operation)
             normalized.update(schema or {})
@@ -209,7 +209,7 @@ CRITICAL:
 Routes:
 - PROFILE_ONLY: schema/profile/summary requests.
 - TEXT_TABLE_RAG: semantic search or natural-language matching over text-heavy fields.
-- KEYWORD_ENGINE: simple single-step analytics (e.g. "show rows where...", "count of...").
+
 - SQL_ENGINE: complex analytics (aggregations + filters/grouping/sorting/comparisons).
 - REFUSE: ambiguous or unanswerable query. If details are missing, return REFUSE with follow_up_questions.
 
@@ -228,7 +228,7 @@ User Query: {query}
 
 Return ONLY valid JSON using this schema:
 {{
-  "route": "SQL_ENGINE|KEYWORD_ENGINE|TEXT_TABLE_RAG|PROFILE_ONLY|REFUSE",
+  "route": "SQL_ENGINE|TEXT_TABLE_RAG|PROFILE_ONLY|REFUSE",
   "schema": {{
     "operation": "sum|avg|count|max|min|correlation|filter|semantic|profile|none",
     "columns": ["ExactColumnNameFromProfile"],

@@ -13,6 +13,7 @@ from app.services.registry import file_registry
 from app.services.ingestion import ingestion_service
 from app.engines.vector_engine import vector_engine
 from app.services.history import get_history, history_service
+from app.engines.keyword_engine import keyword_engine
 
 logger = logging.getLogger(__name__)
 
@@ -99,16 +100,39 @@ class OrchestrationService:
         # 2. Routing
         logger.info(f"[2/5] Routing query...")
         route_start = time.time()
-        route_info = self.router.run({
-            "query": query,
-            "dataset_profile": schema_context,
-            "semantic_summary": file_summary,
-            "text_heavy": text_heavy,
-            "history": get_history(chat_id)
-        })
-        route = route_info["route"]
-        route_schema = route_info.get("schema", {})
-        use_routing_agent = route_info.get("use_routing_agent", False)
+        
+        try:
+            route_info = self.router.run({
+                "query": query,
+                "dataset_profile": schema_context,
+                "semantic_summary": file_summary,
+                "text_heavy": text_heavy,
+                "history": get_history(chat_id)
+            })
+            route = route_info["route"]
+            route_schema = route_info.get("schema", {})
+            use_routing_agent = route_info.get("use_routing_agent", False)
+        except Exception as e:
+            logger.error(f"Router CRASHED: {e}. Falling back to Keyword Engine.")
+            # Fallback Logic
+            keyword_intent = keyword_engine.run(query, schema_context)
+            if keyword_intent:
+                logger.info("Keyword Engine successfully extracted intent.")
+                route = "SQL_ENGINE" # We direct to SQL Engine using the constructed intent
+                route_schema = keyword_intent
+                use_routing_agent = False
+            else:
+                logger.error("Keyword Engine failed to extract intent.")
+                # Construct a refusal response
+                return {
+                    "answer": "I encountered an internal error and couldn't understand your query using my backup systems. Could you try rephrasing?",
+                    "question_type": "error_fallback",
+                    "intent": {},
+                    "retrieved_data": [],
+                    "file_summary": file_summary,
+                    "metadata": {"error": str(e)}
+                }
+
         logger.info(f"Route selected: {route} ({time.time() - route_start:.2f}s)")
 
         if route == "REFUSE":
@@ -226,7 +250,8 @@ class OrchestrationService:
 
         return {
             "answer": answer,
-            "question_type": "keyword_engine" if route == "KEYWORD_ENGINE" else "sql_engine",
+            "answer": answer,
+            "question_type": "sql_engine",
             "intent": route_schema or intent,
             "retrieved_data": retrieved_data,
             "file_summary": file_summary,
