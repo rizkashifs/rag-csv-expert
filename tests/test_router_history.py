@@ -47,3 +47,51 @@ def test_router_uses_history_service_with_chat_id(monkeypatch):
 
     assert result["route"] == "KEYWORD_ENGINE"
     assert result["schema"]["operation"] == "sum"
+
+
+def test_router_returns_enriched_schema_for_keyword_route():
+    agent = RouterAgent()
+    result = agent.run({
+        "query": "total revenue by region",
+        "dataset_profile": "",
+        "semantic_summary": "",
+        "text_heavy": False,
+        "history": [],
+    })
+
+    assert result["route"] == "KEYWORD_ENGINE"
+    assert result["schema"]["operation"] == "sum"
+    assert result["schema"]["group_by"] == ["region"]
+    assert "sql_plan" in result["schema"]
+    assert result["schema"]["sql_plan"]["group_by"] == ["region"]
+
+
+def test_router_promotes_to_sql_engine_for_complex_aggregation():
+    agent = RouterAgent()
+    result = agent.run({
+        "query": 'total sales by region where "sales" > 1000 and "profit" > 100',
+        "dataset_profile": "",
+        "semantic_summary": "",
+        "text_heavy": False,
+        "history": [],
+    })
+
+    assert result["route"] == "SQL_ENGINE"
+    assert result["schema"]["engine_mode"] == "sql"
+    assert len(result["schema"]["filters"]) >= 2
+
+
+def test_router_returns_semantic_plan_for_text_engine_queries():
+    agent = RouterAgent()
+    result = agent.run({
+        "query": "find rows similar to customer complaining about delays",
+        "dataset_profile": "",
+        "semantic_summary": "",
+        "text_heavy": True,
+        "history": [],
+    })
+
+    assert result["route"] == "TEXT_TABLE_RAG"
+    assert result["schema"]["operation"] == "semantic"
+    assert "semantic_plan" in result["schema"]
+    assert result["schema"]["semantic_plan"]["query_text"] == "find rows similar to customer complaining about delays"
