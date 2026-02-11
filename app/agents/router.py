@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 from app.agents.base import BaseAgent
 from app.models.llm_client import llm_client
 from app.services.history import get_history
+from app.utils.history_utils import truncate_history
 
 class RouterAgent(BaseAgent):
     """Route user queries to the best engine and return a structured route schema."""
@@ -197,7 +198,7 @@ Dataset Profile:
 Dataset Summary:
 {semantic_summary}
 
-Conversation History:
+Recent User Queries (for context):
 {history_text}
 
 Text-Heavy Dataset: {text_heavy}
@@ -254,9 +255,8 @@ Return ONLY valid JSON using this schema:
             history = get_history(chat_id)
         history = history or []
 
-        history_text = "\n".join(
-            [f"User: {turn.get('user', '')}\nAssistant: {turn.get('assistant', '')}" for turn in history[-5:]]
-        )
+        # Truncate to last 5 user prompts only (no assistant responses)
+        history_text = truncate_history(history, max_user_turns=5)
 
         # Direct LLM call - No Regex Fast Path
         prompt = self._build_llm_prompt(raw_query, dataset_profile, semantic_summary, history_text, text_heavy)
