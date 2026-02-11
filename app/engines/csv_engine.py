@@ -15,6 +15,10 @@ class SQLEngine:
         operation = intent.get("operation", "none").lower()
         columns = intent.get("columns", [])
         filters = intent.get("filters", [])
+        group_by = intent.get("group_by", [])
+        having = intent.get("having", [])
+        sort = intent.get("sort", [])
+        limit = intent.get("limit") or 10
 
         # Backward compatibility: dict-style filters
         if isinstance(filters, dict):
@@ -25,7 +29,9 @@ class SQLEngine:
         total_rows_filtered = 0
 
         for name, df in dataframes.items():
-            filtered_df = df
+            filtered_df = df.copy()
+            
+            # 1. Filter
             for f in filters:
                 col = f.get("column")
                 op = f.get("operator", "=")
@@ -34,8 +40,9 @@ class SQLEngine:
                     continue
 
                 series = filtered_df[col]
+                # Try numeric conversion for comparison
                 numeric_series = pd.to_numeric(series, errors="coerce")
-                numeric_val = pd.to_numeric(str(val), errors="coerce")
+                numeric_val = pd.to_numeric(str(val), errors="coerce") if val is not None else None
 
                 if op == "=":
                     filtered_df = filtered_df[series.astype(str).str.contains(str(val), case=False, na=False)]
@@ -51,25 +58,130 @@ class SQLEngine:
                     elif op == "<=":
                         filtered_df = filtered_df[numeric_series <= numeric_val]
 
-            if len(filtered_df) == 0 and len(filters) > 0:
-                continue
+            if len(filtered_df) == 0:
+                 if len(dataframes) > 1: continue 
 
-            existing_cols = [c for c in columns if c in filtered_df.columns]
-            sheet_result = None
-            if operation == "sum":
-                sheet_result = filtered_df[existing_cols].apply(pd.to_numeric, errors="coerce").sum().to_dict() if existing_cols else {}
-            elif operation == "avg":
-                sheet_result = filtered_df[existing_cols].apply(pd.to_numeric, errors="coerce").mean().to_dict() if existing_cols else {}
-            elif operation == "count":
-                sheet_result = len(filtered_df)
-            elif operation in {"correlation", "corr"}:
-                if len(existing_cols) >= 2:
-                    numeric_df = filtered_df[existing_cols].apply(pd.to_numeric, errors='coerce')
-                    sheet_result = numeric_df.corr().to_dict()
+            # 2. Prepare for Aggregation/Selection
+            valid_columns = [c for c in columns if c in filtered_df.columns]
+            
+            # Handle Group By with optional Time Grain
+            # group_by can be list of strings OR list of dicts: [{"column": "Date", "time_grain": "year"}]
+            final_groupers = []
+            
+            for g in group_by:
+                col_name = None
+                time_grain = None
+                
+                if isinstance(g, dict):
+                    col_name = g.get("column")
+                    time_grain = g.get("time_grain")
                 else:
-                    sheet_result = "Correlation requires at least two numeric columns."
+                    col_name = str(g)
+                
+                if col_name and col_name in filtered_df.columns:
+                    if time_grain and time_grain.lower() not in ("none", "null"):
+                        # Time Intelligence Logic
+                        try:
+                            # Convert to datetime if needed
+                            if not pd.api.types.is_datetime64_any_dtype(filtered_df[col_name]):
+                                filtered_df[col_name] = pd.to_datetime(filtered_df[col_name], errors='coerce')
+                            
+                            # Create truncated column
+                            grain_map = {"year": "Y", "month": "M", "quarter": "Q", "week": "W", "day": "D"}
+                            freq = grain_map.get(time_grain.lower(), "D")
+                            
+                            # Using to_period for easier display (e.g., 2023 for Year), but converting to str for grouping stability
+                            truncated_col = f"{col_name}_{time_grain}"
+                            filtered_df[truncated_col] = filtered_df[col_name].dt.to_period(freq).astype(str)
+                            final_groupers.append(truncated_col)
+                        except Exception:
+                            # Fallback to normal column if date conversions fail
+                            final_groupers.append(col_name)
+                    else:
+                        final_groupers.append(col_name)
+
+            sheet_result = None
+            res_df = None
+            is_scalar = False
+
+            # 3. Grouping & Aggregation
+            if final_groupers:
+                try:
+                    grouped = filtered_df.groupby(final_groupers)
+                    if operation == "sum":
+                        res_df = grouped[valid_columns].sum(numeric_only=True)
+                    elif operation == "avg":
+                        res_df = grouped[valid_columns].mean(numeric_only=True)
+                    elif operation == "max":
+                        res_df = grouped[valid_columns].max(numeric_only=True)
+                    elif operation == "min":
+                        res_df = grouped[valid_columns].min(numeric_only=True)
+                    else: # count or none/default for grouped
+                        res_df = grouped.size().to_frame(name="count")
+                    
+                    res_df = res_df.reset_index()
+                except Exception as e:
+                    sheet_result = [{"error": f"Grouping failed: {str(e)}"}]
+            
             elif operation in {"filter", "none", "profile"}:
-                sheet_result = filtered_df.head(10).to_dict('records')
+                # Just row selection
+                res_df = filtered_df[valid_columns] if valid_columns else filtered_df
+
+            else:
+                # Scalar Aggregations (Global)
+                is_scalar = True
+                if operation == "sum":
+                    sheet_result = filtered_df[valid_columns].apply(pd.to_numeric, errors="coerce").sum().to_dict() if valid_columns else {}
+                elif operation == "avg":
+                    sheet_result = filtered_df[valid_columns].apply(pd.to_numeric, errors="coerce").mean().to_dict() if valid_columns else {}
+                elif operation == "count":
+                    sheet_result = len(filtered_df)
+                elif operation in {"correlation", "corr"}:
+                    if len(valid_columns) >= 2:
+                        numeric_df = filtered_df[valid_columns].apply(pd.to_numeric, errors='coerce')
+                        sheet_result = numeric_df.corr().to_dict()
+                    else:
+                        sheet_result = "Correlation requires at least two numeric columns."
+
+            # 4. HAVING (Post-Aggregation Filtering)
+            if res_df is not None and not res_df.empty and having:
+                for h in having:
+                    col = h.get("column")
+                    op = h.get("operator", "=")
+                    val = h.get("value")
+                    
+                    if col not in res_df.columns:
+                        continue
+                        
+                    series = res_df[col]
+                    numeric_series = pd.to_numeric(series, errors="coerce")
+                    numeric_val = pd.to_numeric(str(val), errors="coerce")
+                    
+                    if pd.notna(numeric_val):
+                         if op == ">":
+                            res_df = res_df[numeric_series > numeric_val]
+                         elif op == "<":
+                            res_df = res_df[numeric_series < numeric_val]
+                         elif op == ">=":
+                            res_df = res_df[numeric_series >= numeric_val]
+                         elif op == "<=":
+                            res_df = res_df[numeric_series <= numeric_val]
+                         elif op == "=":
+                            res_df = res_df[numeric_series == numeric_val]
+                         elif op == "!=":
+                             res_df = res_df[numeric_series != numeric_val]
+
+            # 5. Sorting (only for DataFrame results)
+            if res_df is not None and not res_df.empty and sort:
+                sort_cols = [s["column"] for s in sort if s["column"] in res_df.columns]
+                ascending = [s.get("direction", "asc") == "asc" for s in sort if s["column"] in res_df.columns]
+                if sort_cols:
+                    res_df = res_df.sort_values(by=sort_cols, ascending=ascending)
+
+            # 6. Limit (only for DataFrame results)
+            if res_df is not None:
+                res_df = res_df.head(limit)
+                sheet_result = res_df.to_dict('records')
 
             if sheet_result is not None:
                 all_results.append({"sheet": name, "result": sheet_result})
