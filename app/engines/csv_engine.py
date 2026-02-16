@@ -245,11 +245,12 @@ class SQLEngine:
                 else:
                     logger.info(f"Found {len(sheet_result)} result rows for sheet '{name}'")
 
-        logger.info(f"Execution complete. Total results: {len(all_results)}, Total rows processed: {total_rows_filtered}")
-        return {
+        final_result = {
             "data": all_results if len(all_results) > 1 else (all_results[0]["result"] if all_results else []),
             "row_count": total_rows_filtered,
         }
+        logger.info(f"Final result being returned from SQLEngine: {final_result}")
+        return final_result
 
 
 sql_engine = SQLEngine()
