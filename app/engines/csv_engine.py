@@ -129,7 +129,7 @@ class SQLEngine:
 
             # 3. Grouping & Aggregation
             if final_groupers:
-                logger.info(f"Performing aggregation: {operation} grouped by {final_groupers}")
+                logger.info(f"Performing grouped aggregation. Operation: '{operation}', Columns: {valid_columns}, Grouped by: {final_groupers}")
                 try:
                     grouped = filtered_df.groupby(final_groupers)
                     if operation == "sum":
@@ -144,30 +144,50 @@ class SQLEngine:
                         res_df = grouped.size().to_frame(name="count")
                     
                     res_df = res_df.reset_index()
+                    logger.info(f"Aggregation complete. Resulting groups: {len(res_df)}")
+                    if not res_df.empty:
+                        logger.info(f"Sample results (first 5):\n{res_df.head(5).to_string()}")
                 except Exception as e:
                     logger.error(f"Grouping failed: {str(e)}")
                     sheet_result = [{"error": f"Grouping failed: {str(e)}"}]
             
             elif operation in {"filter", "none", "profile"}:
-                logger.info(f"Selecting columns: {valid_columns}")
+                logger.info(f"Operation: '{operation}'. Selecting columns: {valid_columns}")
                 res_df = filtered_df[valid_columns] if valid_columns else filtered_df
+                if not res_df.empty:
+                    logger.info(f"Sample results (first 5):\n{res_df.head(5).to_string()}")
 
             else:
                 # Scalar Aggregations (Global)
-                logger.info(f"Performing scalar aggregation: {operation}")
+                logger.info(f"Performing scalar aggregation. Operation: '{operation}', Columns: {valid_columns}")
                 is_scalar = True
                 if operation == "sum":
                     sheet_result = filtered_df[valid_columns].apply(pd.to_numeric, errors="coerce").sum().to_dict() if valid_columns else {}
+                    for col, val in sheet_result.items():
+                        logger.info(f"Result: sum({col}) = {val}")
                 elif operation == "avg":
                     sheet_result = filtered_df[valid_columns].apply(pd.to_numeric, errors="coerce").mean().to_dict() if valid_columns else {}
+                    for col, val in sheet_result.items():
+                        logger.info(f"Result: avg({col}) = {val}")
+                elif operation == "max":
+                    sheet_result = filtered_df[valid_columns].apply(pd.to_numeric, errors="coerce").max().to_dict() if valid_columns else {}
+                    for col, val in sheet_result.items():
+                        logger.info(f"Result: max({col}) = {val}")
+                elif operation == "min":
+                    sheet_result = filtered_df[valid_columns].apply(pd.to_numeric, errors="coerce").min().to_dict() if valid_columns else {}
+                    for col, val in sheet_result.items():
+                        logger.info(f"Result: min({col}) = {val}")
                 elif operation == "count":
                     sheet_result = len(filtered_df)
+                    logger.info(f"Result: count(*) = {sheet_result}")
                 elif operation in {"correlation", "corr"}:
                     if len(valid_columns) >= 2:
                         numeric_df = filtered_df[valid_columns].apply(pd.to_numeric, errors='coerce')
                         sheet_result = numeric_df.corr().to_dict()
+                        logger.info(f"Result: correlation matrix calculated for {valid_columns}")
                     else:
                         sheet_result = "Correlation requires at least two numeric columns."
+                        logger.warning(sheet_result)
 
             # 4. HAVING (Post-Aggregation Filtering)
             if res_df is not None and not res_df.empty and having:
