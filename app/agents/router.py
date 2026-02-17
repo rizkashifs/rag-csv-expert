@@ -1,5 +1,4 @@
 import json
-import logging
 import re
 from typing import Any, Dict, List, Optional
 
@@ -7,6 +6,7 @@ from app.agents.base import BaseAgent
 from app.models.llm_client import llm_client
 from app.services.history import get_history
 from app.utils.history_utils import truncate_history
+from app.utils.logger import logger
 
 class RouterAgent(BaseAgent):
     """Route user queries to the best engine and return a structured route schema."""
@@ -15,7 +15,7 @@ class RouterAgent(BaseAgent):
     OPERATIONS_REQUIRING_COLUMN = {"sum", "avg", "max", "min", "correlation"}
 
     def __init__(self):
-        self.logger = logging.getLogger(__name__)
+        self.logger = logger
 
     def _base_schema(self, operation: str = "none") -> Dict[str, Any]:
         return {

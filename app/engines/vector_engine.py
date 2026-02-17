@@ -1,5 +1,4 @@
 import os
-import logging
 from typing import List
 from langchain_community.vectorstores import FAISS
 from langchain_ollama import OllamaEmbeddings
@@ -9,7 +8,7 @@ try:
 except ImportError:
     SentenceTransformer = None
 
-logger = logging.getLogger(__name__)
+from app.utils.logger import logger
 
 class DirectHuggingFaceEmbeddings:
     """Wrapper to make SentenceTransformer compatible with LangChain VectorStore"""

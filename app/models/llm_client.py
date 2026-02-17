@@ -1,10 +1,9 @@
-import logging
 from app.core.config import settings
 from app.models.ollama_client import llm_client as ollama
 from app.models.anthropic_client import anthropic_client as anthropic
 from app.models.bedrock_client import bedrock_client as bedrock
 
-logger = logging.getLogger(__name__)
+from app.utils.logger import logger
 
 class UnifiedLLMClient:
     """

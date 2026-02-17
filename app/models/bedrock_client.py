@@ -1,9 +1,8 @@
 import boto3
-import logging
 from app.core.config import settings
 from typing import List, Dict, Any, Optional
 
-logger = logging.getLogger(__name__)
+from app.utils.logger import logger
 
 class BedrockClient:
     """

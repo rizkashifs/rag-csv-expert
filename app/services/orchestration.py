@@ -1,4 +1,3 @@
-import logging
 import time
 import os
 from typing import Dict, Any, Optional
@@ -15,7 +14,7 @@ from app.engines.vector_engine import vector_engine
 from app.services.history import get_history, history_service
 from app.engines.keyword_engine import keyword_engine
 
-logger = logging.getLogger(__name__)
+from app.utils.logger import logger
 
 class OrchestrationService:
     """
