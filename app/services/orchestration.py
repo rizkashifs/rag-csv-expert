@@ -128,7 +128,7 @@ class OrchestrationService:
                     "answer": "I encountered an internal error and couldn't understand your query using my backup systems. Could you try rephrasing?",
                     "question_type": "error_fallback",
                     "intent": {},
-                    "retrieved_data": [],
+                    "retrieved_data": refusal_payload,
                     "file_summary": file_summary,
                     "metadata": {"error": str(e)}
                 }
@@ -136,14 +136,18 @@ class OrchestrationService:
         logger.info(f"Route selected: {route} ({time.time() - route_start:.2f}s)")
 
         if route == "REFUSE":
-            answer = self.refusal_agent.run({"schema_context": schema_context, "route_schema": route_schema})
+            refusal_payload = self.refusal_agent.run({"schema_context": schema_context, "route_schema": route_schema})
+            summary = ""
+            if refusal_payload.get("relevant_rows"):
+                summary = str(refusal_payload["relevant_rows"][0].get("_summary", ""))
+            answer = summary or "I need more detail to answer this request."
             if chat_id:
                 history_service.add_turn(chat_id, query, answer)
             return {
                 "answer": answer,
                 "question_type": "clarify",
                 "intent": route_schema or {},
-                "retrieved_data": [],
+                "retrieved_data": refusal_payload,
                 "file_summary": file_summary,
                 "metadata": {
                     "execution_time": time.time() - start_time,
@@ -166,7 +170,7 @@ class OrchestrationService:
                 "answer": answer,
                 "question_type": "profile_only",
                 "intent": route_schema or {},
-                "retrieved_data": [],
+                "retrieved_data": refusal_payload,
                 "file_summary": file_summary,
                 "metadata": {
                     "execution_time": time.time() - start_time,

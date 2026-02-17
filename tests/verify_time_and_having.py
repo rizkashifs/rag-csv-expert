@@ -24,7 +24,7 @@ def test_time_and_having():
     }
     res1 = sql_engine.execute(df, intent1)
     print("Test 1 (Trend by Year):", res1)
-    data1 = res1["data"]
+    data1 = res1["relevant_rows"]
     assert len(data1) == 2
     # Check if 'Date_year' or similar exists and values are correct
     item_2024 = next(item for item in data1 if "2024" in str(item.values()))
@@ -42,7 +42,7 @@ def test_time_and_having():
     }
     res2 = sql_engine.execute(df, intent2)
     print("Test 2 (Having Sales > 400):", res2)
-    data2 = res2["data"]
+    data2 = res2["relevant_rows"]
     assert len(data2) == 1
     assert data2[0]["Region"] == "South"
 

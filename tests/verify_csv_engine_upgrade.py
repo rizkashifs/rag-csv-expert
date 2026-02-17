@@ -23,7 +23,7 @@ def test_engine():
     }
     res1 = sql_engine.execute(df, intent1)
     print("Test 1 (Group By Region):", res1)
-    assert len(res1["data"]) == 4 # N, S, E, W
+    assert len(res1["relevant_rows"]) == 4 # N, S, E, W
 
     # Test 2: Sort + Limit
     intent2 = {
@@ -34,8 +34,8 @@ def test_engine():
     }
     res2 = sql_engine.execute(df, intent2)
     print("Test 2 (Top 3 Sales):", res2)
-    assert len(res2["data"]) == 3
-    assert res2["data"][0]["Sales"] == 400 # West
+    assert len(res2["relevant_rows"]) == 3
+    assert res2["relevant_rows"][0]["Sales"] == 400 # West
 
     # Test 3: Filter + Group By + Sort
     intent3 = {
