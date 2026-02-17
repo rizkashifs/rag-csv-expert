@@ -1,11 +1,10 @@
 import json
-import logging
 import re
 import pandas as pd
 import chardet
 from typing import Tuple, List, Dict, Any, Iterable
 
-logger = logging.getLogger(__name__)
+from app.utils.logger import logger
 
 class IngestionService:
     """

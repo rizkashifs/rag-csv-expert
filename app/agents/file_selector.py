@@ -1,9 +1,8 @@
 import json
-import logging
 from app.agents.base import BaseAgent
 from app.models.llm_client import llm_client
 
-logger = logging.getLogger(__name__)
+from app.utils.logger import logger
 
 class FileSelectorAgent(BaseAgent):
     """

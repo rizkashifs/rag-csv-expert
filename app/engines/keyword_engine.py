@@ -1,6 +1,6 @@
 import re
-import logging
 from typing import Dict, Any, List
+from app.utils.logger import logger
 
 class KeywordEngine:
     """
@@ -8,7 +8,7 @@ class KeywordEngine:
     Used ONLY as a fallback when the LLM Router crashes.
     """
     def __init__(self):
-        self.logger = logging.getLogger(__name__)
+        self.logger = logger
 
     def run(self, query: str, schema_context: str) -> Dict[str, Any]:
         """

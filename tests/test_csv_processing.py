@@ -56,3 +56,22 @@ def test_csv_engine_operations(csv_engine):
     result = csv_engine.execute(df, {"operation": "filter", "filters": {"city": "New York"}})
     assert len(result["relevant_rows"]) == 2
     assert result["relevant_rows"][0]["name"] == "Alice"
+
+def test_csv_engine_routes_filter_type_issues_to_refusal(csv_engine):
+    df = pd.DataFrame({
+        "name": ["Alice", "Bob", "Charlie"],
+        "age": [30, 25, 35],
+    })
+
+    result = csv_engine.execute(
+        df,
+        {
+            "operation": "sum",
+            "columns": ["age"],
+            "filters": [{"column": "age", "operator": ">", "value": "not-a-number"}],
+        },
+    )
+
+    assert "relevant_rows" in result
+    assert result["relevant_rows"][0]["should_ask_user"] is True
+    assert "Please clarify" in result["relevant_rows"][0]["_summary"]

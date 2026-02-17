@@ -1,7 +1,6 @@
-import logging
 from typing import Dict, List, Any, Optional
 
-logger = logging.getLogger(__name__)
+from app.utils.logger import logger
 
 class FileRegistry:
     """

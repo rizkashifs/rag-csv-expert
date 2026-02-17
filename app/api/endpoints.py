@@ -1,6 +1,5 @@
 import shutil
 import os
-import logging
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from app.models.schemas import QueryRequest, QueryResponse
 from app.services.ingestion import ingestion_service
@@ -8,7 +7,7 @@ from app.engines.vector_engine import vector_engine
 from app.services.retrieval import retrieve_csv
 from app.services.orchestration import orchestrator
 
-logger = logging.getLogger(__name__)
+from app.utils.logger import logger
 
 router = APIRouter()
 
