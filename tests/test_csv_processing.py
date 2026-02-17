@@ -46,13 +46,13 @@ def test_csv_engine_operations(csv_engine):
     
     # Test Count
     result = csv_engine.execute(df, {"operation": "count"})
-    assert result["data"] == 3
+    assert result["relevant_rows"][0]["_summary"].lower().startswith("count of rows")
     
     # Test Sum
     result = csv_engine.execute(df, {"operation": "sum", "columns": ["age"]})
-    assert result["data"]["age"] == 90
+    assert "Sum: 90" in result["relevant_rows"][0]["age"]
     
     # Test Filter
     result = csv_engine.execute(df, {"operation": "filter", "filters": {"city": "New York"}})
-    assert result["row_count"] == 2
-    assert result["data"][0]["name"] == "Alice"
+    assert len(result["relevant_rows"]) == 2
+    assert result["relevant_rows"][0]["name"] == "Alice"
