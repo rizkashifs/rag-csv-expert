@@ -12,7 +12,6 @@ from app.services.registry import file_registry
 from app.services.ingestion import ingestion_service
 from app.engines.vector_engine import vector_engine
 from app.services.history import get_history, history_service
-from app.engines.keyword_engine import keyword_engine
 
 from app.utils.logger import logger
 
@@ -112,25 +111,15 @@ class OrchestrationService:
             route_schema = route_info.get("schema", {})
             use_routing_agent = route_info.get("use_routing_agent", False)
         except Exception as e:
-            logger.error(f"Router CRASHED: {e}. Falling back to Keyword Engine.")
-            # Fallback Logic
-            keyword_intent = keyword_engine.run(query, schema_context)
-            if keyword_intent:
-                logger.info("Keyword Engine successfully extracted intent.")
-                route = "SQL_ENGINE" # We direct to SQL Engine using the constructed intent
-                route_schema = keyword_intent
-                use_routing_agent = False
-            else:
-                logger.error("Keyword Engine failed to extract intent.")
-                # Construct a refusal response
-                return {
-                    "answer": "I encountered an internal error and couldn't understand your query using my backup systems. Could you try rephrasing?",
-                    "question_type": "error_fallback",
-                    "intent": {},
-                    "retrieved_data": refusal_payload,
-                    "file_summary": file_summary,
-                    "metadata": {"error": str(e)}
-                }
+            logger.error(f"Router CRASHED: {e}.")
+            return {
+                "answer": "I encountered an internal error and couldn't process your request. Please try again or rephrase your query.",
+                "question_type": "error",
+                "intent": {},
+                "retrieved_data": [],
+                "file_summary": file_summary,
+                "metadata": {"error": str(e)}
+            }
 
         logger.info(f"Route selected: {route} ({time.time() - route_start:.2f}s)")
 

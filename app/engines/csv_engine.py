@@ -75,13 +75,47 @@ class SQLEngine:
         logger.info(f"Creating refusal payload. summary={summary}, payload={payload}")
         return payload
 
-    def _summary_rows_from_scalar(self, operation: str, scalar_result: Any, columns: List[str]) -> List[Dict[str, Any]]:
+    def _summary_rows_from_scalar(
+        self,
+        operation: str,
+        scalar_result: Any,
+        columns: List[str],
+        filters: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
         logger.info(
-            f"Building summary rows from scalar. operation={operation}, scalar_result={scalar_result}, columns={columns}"
+            f"Building summary rows from scalar. operation={operation}, scalar_result={scalar_result}, columns={columns}, filters={filters}"
         )
+
+        filter_desc = ""
+        if filters:
+            desc_parts = []
+            for f in filters:
+                col = f.get("column")
+                op = str(f.get("operator", "=")).strip().lower()
+                val = f.get("value")
+
+                # Natural language mapping
+                op_map = {
+                    ">=": "after or on" if "date" in str(col).lower() else "at least",
+                    ">": "after" if "date" in str(col).lower() else "greater than",
+                    "<": "before" if "date" in str(col).lower() else "less than",
+                    "<=": "before or on" if "date" in str(col).lower() else "at most",
+                    "=": "is",
+                    "==": "is",
+                    "contains": "containing",
+                    "like": "containing",
+                }
+                natural_op = op_map.get(op, op)
+                desc_parts.append(f"{col} {natural_op} {val}")
+            filter_desc = " where " + " and ".join(desc_parts)
+
+        if operation == "profile" and isinstance(scalar_result, list):
+            # If scalar_result is already a list of formatted stats rows, return them
+            return scalar_result
+
         if operation == "count":
             value = scalar_result if isinstance(scalar_result, (int, float)) else 0
-            return [{"count": f"Count: {value}", "_summary": f"Count of rows: {value}"}]
+            return [{"count": f"Count: {value}", "_summary": f"Count of rows{filter_desc}: {value}"}]
 
         if isinstance(scalar_result, dict) and scalar_result:
             rows = []
@@ -92,11 +126,12 @@ class SQLEngine:
                 "max": "Maximum",
             }.get(operation, operation.capitalize())
             for col, val in scalar_result.items():
-                rows.append({col: f"{op_word}: {val}", "_summary": f"{op_word} of {col}: {val}"})
+                summary_text = f"{op_word} of {col}{filter_desc}: {val}"
+                rows.append({col: summary_text, "_summary": summary_text})
             return rows
 
         if operation in {"correlation", "corr"} and isinstance(scalar_result, dict):
-            return [{"correlation": scalar_result, "_summary": "Correlation matrix computed."}]
+            return [{"correlation": scalar_result, "_summary": f"Correlation matrix computed{filter_desc}."}]
 
         target = ", ".join(columns) if columns else "target column"
         op_word = {
@@ -106,7 +141,7 @@ class SQLEngine:
             "max": "Maximum",
             "count": "Count",
         }.get(operation, operation.capitalize())
-        return [{"_summary": f"{op_word} could not be computed for {target}.", "should_ask_user": True}]
+        return [{"_summary": f"{op_word} could not be computed for {target}{filter_desc}.", "should_ask_user": True}]
 
     def _apply_single_filter(
         self,
@@ -142,6 +177,13 @@ class SQLEngine:
             f"Prepared filter context. resolved_column={col}, operator={op}, value={value}, numeric_value={numeric_value}"
         )
 
+        # Handle null/empty checks
+        if value_text.lower() in {"null", "none", "nan", "", "empty"}:
+            if op in {"=", "==", "eq", "is"}:
+                return df[series.isna() | (text_series == "")]
+            if op in {"!=", "<>", "neq", "is not"}:
+                return df[series.notna() & (text_series != "")]
+
         if op in {"=", "==", "eq"}:
             if pd.notna(numeric_value) and numeric_series.notna().sum() > 0:
                 return df[numeric_series == numeric_value]
@@ -176,13 +218,25 @@ class SQLEngine:
         if op == "between":
             bounds = value if isinstance(value, list) else str(value).split(",")
             if len(bounds) >= 2:
-                low = pd.to_numeric(str(bounds[0]).strip(), errors="coerce")
-                high = pd.to_numeric(str(bounds[1]).strip(), errors="coerce")
-                if pd.notna(low) and pd.notna(high) and numeric_series.notna().sum() > 0:
-                    return df[(numeric_series >= low) & (numeric_series <= high)]
+                low_val = str(bounds[0]).strip()
+                high_val = str(bounds[1]).strip()
+
+                # Try numeric first
+                low_num = pd.to_numeric(low_val, errors="coerce")
+                high_num = pd.to_numeric(high_val, errors="coerce")
+                if pd.notna(low_num) and pd.notna(high_num) and numeric_series.notna().sum() > 0:
+                    return df[(numeric_series >= low_num) & (numeric_series <= high_num)]
+
+                # Try datetime second
+                if datetime_valid:
+                    low_dt = pd.to_datetime(low_val, errors="coerce")
+                    high_dt = pd.to_datetime(high_val, errors="coerce")
+                    if pd.notna(low_dt) and pd.notna(high_dt):
+                        return df[(datetime_series >= low_dt) & (datetime_series <= high_dt)]
+
             if issues is not None:
                 issues.append(
-                    f"Filter '{requested_col} between {value}' could not be applied due to incompatible data type."
+                    f"Filter '{requested_col} between {value}' could not be applied due to incompatible data types."
                 )
             return df
 
@@ -360,10 +414,28 @@ class SQLEngine:
                     try:
                         if not pd.api.types.is_datetime64_any_dtype(filtered_df[resolved_col_name]):
                             filtered_df[resolved_col_name] = pd.to_datetime(filtered_df[resolved_col_name], errors="coerce")
-                        grain_map = {"year": "Y", "month": "M", "quarter": "Q", "week": "W", "day": "D"}
-                        freq = grain_map.get(str(time_grain).lower(), "D")
-                        truncated_col = f"{resolved_col_name}_{time_grain}"
-                        filtered_df[truncated_col] = filtered_df[resolved_col_name].dt.to_period(freq).astype(str)
+                        
+                        grain = str(time_grain).lower()
+                        truncated_col = f"{resolved_col_name}_{grain}"
+                        dt_series = filtered_df[resolved_col_name].dt
+                        
+                        if grain == "year":
+                            filtered_df[truncated_col] = dt_series.year.astype(str)
+                        elif grain == "month":
+                            filtered_df[truncated_col] = dt_series.strftime("%Y-%m")
+                        elif grain == "month_name":
+                            filtered_df[truncated_col] = dt_series.month_name()
+                        elif grain == "day":
+                            filtered_df[truncated_col] = dt_series.strftime("%Y-%m-%d")
+                        elif grain == "day_name":
+                            filtered_df[truncated_col] = dt_series.day_name()
+                        elif grain == "quarter":
+                            filtered_df[truncated_col] = dt_series.to_period("Q").astype(str)
+                        else:
+                            grain_map = {"week": "W"}
+                            freq = grain_map.get(grain, "D")
+                            filtered_df[truncated_col] = dt_series.to_period(freq).astype(str)
+                            
                         final_groupers.append(truncated_col)
                         logger.info(
                             f"Applied time grain grouping. source_column={resolved_col_name}, time_grain={time_grain}, "
@@ -405,7 +477,7 @@ class SQLEngine:
                         follow_up_questions=[f"Grouping failed: {str(e)}"],
                     )
 
-            elif operation in {"filter", "none", "profile"}:
+            elif operation in {"filter", "none"}:
                 res_df = filtered_df[valid_columns] if valid_columns else filtered_df
                 logger.info(f"Passthrough operation complete. result_rows={len(res_df)}")
             else:
@@ -421,6 +493,38 @@ class SQLEngine:
                     scalar_result = filtered_df[valid_columns].apply(pd.to_numeric, errors="coerce").min().to_dict() if valid_columns else {}
                 elif operation == "count":
                     scalar_result = len(filtered_df)
+                elif operation == "profile":
+                    logger.info(f"Profiling columns: {valid_columns}")
+                    stats_list = []
+                    target_cols = valid_columns if valid_columns else list(filtered_df.columns)[:10]
+                    for col in target_cols:
+                        series = filtered_df[col]
+                        non_null = series.count()
+                        unique = series.nunique()
+                        summary_parts = [f"Count: {len(series)}", f"Unique: {unique}"]
+                        
+                        # Try Numeric
+                        num_series = pd.to_numeric(series, errors="coerce")
+                        if num_series.notna().sum() > 0:
+                            summary_parts.append(f"Min: {round(num_series.min(), 2)}")
+                            summary_parts.append(f"Max: {round(num_series.max(), 2)}")
+                            summary_parts.append(f"Avg: {round(num_series.mean(), 2)}")
+                        else:
+                            # Try Date
+                            with warnings.catch_warnings():
+                                warnings.simplefilter("ignore", UserWarning)
+                                dt_series = pd.to_datetime(series, errors="coerce")
+                            if dt_series.notna().sum() > 0:
+                                summary_parts.append(f"Min Date: {dt_series.min().strftime('%Y-%m-%d')}")
+                                summary_parts.append(f"Max Date: {dt_series.max().strftime('%Y-%m-%d')}")
+                        
+                        stat_summary = " | ".join(summary_parts)
+                        stats_list.append({
+                            "column": col,
+                            "stats": stat_summary,
+                            "_summary": f"Summary for '{col}'{filter_desc}: {stat_summary}"
+                        })
+                    scalar_result = stats_list
                 elif operation in {"correlation", "corr"}:
                     if len(valid_columns) >= 2:
                         numeric_df = filtered_df[valid_columns].apply(pd.to_numeric, errors="coerce")
@@ -442,7 +546,7 @@ class SQLEngine:
                 sheet_result_rows = res_df.head(limit).to_dict("records")
                 logger.info(f"Materialized tabular result rows for '{name}'. row_count={len(sheet_result_rows)}")
             elif is_scalar:
-                sheet_result_rows = self._summary_rows_from_scalar(operation, scalar_result, valid_columns)
+                sheet_result_rows = self._summary_rows_from_scalar(operation, scalar_result, valid_columns, filters=filters)
                 logger.info(f"Materialized scalar summary rows for '{name}'. rows={sheet_result_rows}")
 
             if len(dataframes) > 1:
@@ -458,7 +562,7 @@ class SQLEngine:
             return self._refusal_payload("I could not compute a result from the provided dataset and query plan.", schema_context=schema_context)
 
         payload = {"relevant_rows": all_rows}
-        logger.info(f"Execution complete. output_payload_keys={list(payload.keys())}, result_count={len(all_rows)}")
+        logger.info(f"Execution complete. Returning payload: {payload}")
         return payload
 
 
