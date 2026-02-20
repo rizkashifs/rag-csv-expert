@@ -10,7 +10,8 @@ from app.agents.summary import SummaryAgent
 from app.agents.refusal import RefusalAgent
 from app.services.registry import file_registry
 from app.services.ingestion import ingestion_service
-from app.engines.vector_engine import vector_engine
+from app.engines.csv_engine import sql_engine
+from app.engines.text_engine import text_engine
 from app.services.history import get_history, history_service
 
 from app.utils.logger import logger
@@ -171,9 +172,14 @@ class OrchestrationService:
             }
 
         if route == "TEXT_TABLE_RAG":
-            logger.info(f"[3/4] Retrieving text chunks from vector index...")
+            logger.info(f"[3/4] Retrieving via TextEngine (grep/pandas)...")
             retrieve_start = time.time()
-            retrieved_data = vector_engine.search(query, index_name)
+            retrieved_data = self.retriever.run({
+                "query": query,
+                "intent": route_schema or {"operation": "semantic"},
+                "df": df,
+                "engine_type": "TEXT_TABLE_RAG"
+            })
             logger.info(f"Data retrieved in {time.time() - retrieve_start:.2f}s")
 
             logger.info(f"[4/4] Synthesizing Answer...")

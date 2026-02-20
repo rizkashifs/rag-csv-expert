@@ -57,6 +57,8 @@ class RouterAgent(BaseAgent):
                 "engine_mode": "semantic",
                 "semantic_plan": {
                     "query_text": "",
+                    "keywords": [],
+                    "id_filters": [],
                     "target_text_columns": [],
                     "semantic_intent": "row_matching",
                     "top_k": 8,
@@ -230,16 +232,24 @@ Return ONLY valid JSON using this schema:
     }},
     "semantic_plan": {{
       "query_text": "{query}",
+      "keywords": ["keyword1", "keyword2"],
+      "id_filters": [{{"column": "ExactIdColumnName", "value": "1234"}}],
       "target_text_columns": ["ExactColumnName"],
       "semantic_intent": "row_matching|theme_extraction|qa",
       "top_k": 8,
       "min_similarity": null,
-      "post_filters": []
+      "post_filters": [{{"column": "ExactColumnName", "operator": "=", "value": "someValue"}}]
     }},
     "reason": "optional reason for refusal",
     "follow_up_questions": ["optional clarifying question"]
   }}
 }}
+
+INSTRUCTIONS for semantic_plan fields:
+- keywords: ALWAYS extract the key search terms from the user query (no stopwords like "the", "and", "show", etc).
+- id_filters: if the user references a specific row by any identifier (e.g. "employee 1234", "order #99"), set column and value here.
+- target_text_columns: the dataset columns that contain free-text to search within.
+- post_filters: additional column filters (operator/value) to apply AFTER the text search has matched rows.
 """.strip()
 
     def run(self, input_data: dict) -> dict:

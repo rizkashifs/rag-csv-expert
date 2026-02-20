@@ -2,7 +2,7 @@ from typing import Any
 
 from app.agents.base import BaseAgent
 from app.engines.csv_engine import sql_engine
-from app.engines.vector_engine import vector_engine
+from app.engines.text_engine import text_engine
 
 
 class CSVRetrieverAgent(BaseAgent):
@@ -12,16 +12,21 @@ class CSVRetrieverAgent(BaseAgent):
 
     def run(self, input_data: dict) -> Any:
         """
-        Input: {"intent": dict, "df": pd.DataFrame, "index_name": str, "engine_type": str}
-        Output: Exact rows, numbers, or computed metrics.
+        Input: {"intent": dict, "df": pd.DataFrame, "index_name": str, "engine_type": str, "query": str}
+        Output: {"relevant_rows": [...]}
         """
         intent = input_data.get("intent")
         df = input_data.get("df")
-        index_name = input_data.get("index_name")
         engine_type = input_data.get("engine_type", "sql_engine")
 
         if engine_type in {"sql_engine", "csv_engine"} and df is not None:
             return sql_engine.execute(df, intent)
 
-        query = input_data.get("query")
-        return vector_engine.search(query, index_name)
+        if engine_type in {"text_engine", "TEXT_TABLE_RAG"} and df is not None:
+            return text_engine.execute(df, intent)
+
+        # Fallback (should not normally be reached)
+        query = input_data.get("query", "")
+        if df is not None:
+            return text_engine.execute(df, intent)
+        return {"relevant_rows": []}

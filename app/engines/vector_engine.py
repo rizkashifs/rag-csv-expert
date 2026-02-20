@@ -1,5 +1,5 @@
 import os
-from typing import List
+from typing import List, Dict, Any, Tuple
 from langchain_community.vectorstores import FAISS
 from langchain_ollama import OllamaEmbeddings
 from app.core.config import settings
@@ -41,14 +41,15 @@ class VectorEngine:
                 base_url=settings.OLLAMA_BASE_URL
             )
 
-    def search(self, query: str, index_name: str, k: int = 5) -> List[str]:
+    def search(self, query: str, index_name: str, k: int = 5) -> Dict[str, List[Dict[str, Any]]]:
         """
         Performs similarity search on a specific index.
+        Returns result consistent with SQL engine structure: {"relevant_rows": [...]}
         """
         save_path = os.path.join(settings.FAISS_INDEX_PATH, index_name)
         if not os.path.exists(save_path):
             logger.warning(f"Index not found at {save_path}")
-            return []
+            return {"relevant_rows": []}
             
         logger.info(f"Loading local index from {save_path}...")
         vector_store = FAISS.load_local(
@@ -57,8 +58,24 @@ class VectorEngine:
             allow_dangerous_deserialization=True
         )
         logger.info(f"Performing similarity search for: {query[:50]}...")
-        docs = vector_store.similarity_search(query, k=k)
-        return [doc.page_content for doc in docs]
+        
+        # Use similarity_search_with_score to get distance metrics
+        docs_and_scores: List[Tuple[Any, float]] = vector_store.similarity_search_with_score(query, k=k)
+        
+        unique_results = []
+        seen_content = set()
+        
+        for doc, score in docs_and_scores:
+            content = doc.page_content
+            if content not in seen_content:
+                seen_content.add(content)
+                unique_results.append({
+                    "content": content,
+                    "vector_score": float(score),
+                    "_summary": f"Semantic Match (Score: {score:.4f}): {content[:100]}..."
+                })
+        
+        return {"relevant_rows": unique_results}
 
     def create_index(self, texts: List[str], index_name: str):
         """
