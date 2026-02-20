@@ -75,6 +75,31 @@ class SQLEngine:
         logger.info(f"Creating refusal payload. summary={summary}, payload={payload}")
         return payload
 
+    def _get_filter_description(self, filters: Optional[List[Dict[str, Any]]]) -> str:
+        if not filters:
+            return ""
+
+        desc_parts = []
+        for f in filters:
+            col = f.get("column")
+            op = str(f.get("operator", "=")).strip().lower()
+            val = f.get("value")
+
+            # Natural language mapping
+            op_map = {
+                ">=": "after or on" if "date" in str(col).lower() else "at least",
+                ">": "after" if "date" in str(col).lower() else "greater than",
+                "<": "before" if "date" in str(col).lower() else "less than",
+                "<=": "before or on" if "date" in str(col).lower() else "at most",
+                "=": "is",
+                "==": "is",
+                "contains": "containing",
+                "like": "containing",
+            }
+            natural_op = op_map.get(op, op)
+            desc_parts.append(f"{col} {natural_op} {val}")
+        return " where " + " and ".join(desc_parts)
+
     def _summary_rows_from_scalar(
         self,
         operation: str,
@@ -86,28 +111,7 @@ class SQLEngine:
             f"Building summary rows from scalar. operation={operation}, scalar_result={scalar_result}, columns={columns}, filters={filters}"
         )
 
-        filter_desc = ""
-        if filters:
-            desc_parts = []
-            for f in filters:
-                col = f.get("column")
-                op = str(f.get("operator", "=")).strip().lower()
-                val = f.get("value")
-
-                # Natural language mapping
-                op_map = {
-                    ">=": "after or on" if "date" in str(col).lower() else "at least",
-                    ">": "after" if "date" in str(col).lower() else "greater than",
-                    "<": "before" if "date" in str(col).lower() else "less than",
-                    "<=": "before or on" if "date" in str(col).lower() else "at most",
-                    "=": "is",
-                    "==": "is",
-                    "contains": "containing",
-                    "like": "containing",
-                }
-                natural_op = op_map.get(op, op)
-                desc_parts.append(f"{col} {natural_op} {val}")
-            filter_desc = " where " + " and ".join(desc_parts)
+        filter_desc = self._get_filter_description(filters)
 
         if operation == "profile" and isinstance(scalar_result, list):
             # If scalar_result is already a list of formatted stats rows, return them
@@ -495,6 +499,7 @@ class SQLEngine:
                     scalar_result = len(filtered_df)
                 elif operation == "profile":
                     logger.info(f"Profiling columns: {valid_columns}")
+                    filter_desc = self._get_filter_description(filters)
                     stats_list = []
                     target_cols = valid_columns if valid_columns else list(filtered_df.columns)[:10]
                     for col in target_cols:
