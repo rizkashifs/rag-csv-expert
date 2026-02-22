@@ -10,8 +10,6 @@ from app.agents.summary import SummaryAgent
 from app.agents.refusal import RefusalAgent
 from app.services.registry import file_registry
 from app.services.ingestion import ingestion_service
-from app.engines.csv_engine import sql_engine
-from app.engines.text_engine import text_engine
 from app.services.history import get_history, history_service
 
 from app.utils.logger import logger
@@ -159,7 +157,7 @@ class OrchestrationService:
                 "answer": answer,
                 "question_type": "profile_only",
                 "intent": route_schema or {},
-                "retrieved_data": refusal_payload,
+                "retrieved_data": {},
                 "file_summary": file_summary,
                 "metadata": {
                     "execution_time": time.time() - start_time,
@@ -247,7 +245,6 @@ class OrchestrationService:
             history_service.add_turn(chat_id, query, answer)
 
         return {
-            "answer": answer,
             "answer": answer,
             "question_type": "sql_engine",
             "intent": route_schema or intent,
