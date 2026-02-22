@@ -1,45 +1,53 @@
 # RAG CSV Expert
 
-A disciplined, agentic RAG application specialized in complex CSV and Excel handling using local LLMs (Ollama) or Cloud LLMs (Anthropic, AWS Bedrock).
+Agentic RAG API for CSV/Excel analytics with deterministic Pandas execution and text-table retrieval.
 
-## Features
-- **Multi-Format Support**: Robust handling of CSV and Excel (`.xlsx`, `.xls`) files, including multi-sheet workbooks.
-- **Multi-File Intelligence**: Upload multiple files and let the system automatically route queries to the correct dataset using LLM-based file selection.
-- **Deterministic Data Processing**: Uses Pandas for calculations (sums, averages, filters, correlations) across all sheets to eliminate LLM math hallucinations.
-- **Agentic Routing**: Automatically routes questions to either a **CSV Engine** (for data/numbers) or a **Vector Engine** (for semantic/meaning based questions).
-- **Industrial Strength Ingestion**: Robust handling of CSV encodings, delimiters, and automated semantic data profiling with LLM-generated summaries.
-- **Hybrid Embeddings**: Choose between **HuggingFace** (extremely fast, runs in Python) or **Ollama** for vector indexing.
-- **Local & Private**: Option to run entirely on your machine with Ollama.
-- **Enterprise Cloud Support**: Native integration with **Anthropic Claude** and **AWS Bedrock** (Converse API) for production workloads.
+## What It Does
+- Ingests `.csv`, `.xlsx`, and `.xls` files.
+- Builds a dataset profile and LLM-generated summary on upload.
+- Routes each question to one of these paths:
+  - `SQL_ENGINE` for deterministic analytics (`sum`, `avg`, `count`, `min`, `max`, filtering, grouping, having, sorting).
+  - `TEXT_TABLE_RAG` for text-heavy row retrieval using Pandas/regex keyword matching.
+  - `PROFILE_ONLY` for schema/summary requests.
+  - `REFUSE` when the query is ambiguous and needs clarification.
+- Supports single-file queries or automatic file selection across multiple uploaded files.
+- Supports LLM providers: `ollama`, `anthropic`, `bedrock`.
+- Supports embedding providers for FAISS indexing: `huggingface` or `ollama`.
 
-## Prerequisites
-1. **Ollama**: Download and install from [ollama.com](https://ollama.com).
-2. **Python 3.10+**: Ensure you have Python installed.
+## Tech Stack
+- FastAPI + Uvicorn
+- Pandas
+- FAISS (LangChain wrapper)
+- Ollama / Anthropic / AWS Bedrock
 
-## Setup Instructions
+## Quick Start
 
-### 1. Configure Ollama
-Ensure Ollama is running, then pull the required model:
-```powershell
-# If ollama is in your PATH:
-ollama pull phi
-
-# If you use the default Windows installation path:
-& "$env:LOCALAPPDATA\Programs\Ollama\ollama.exe" pull phi
+### 1. Install dependencies
+```bash
+pip install -r requirements.txt
 ```
 
-### 2. Configure Settings (Optional)
-You can switch embedding providers in `app/core/config.py`:
-```python
-EMBEDDING_PROVIDER = "huggingface"  # Options: "ollama", "huggingface"
-```
-
-If you prefer using Claude for reasoning, add your Anthropic API key to a `.env` file:
+### 2. Create `.env`
+Minimal local setup:
 ```env
-ANTHROPIC_API_KEY=your_sk_key_here
+LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=phi
+
+EMBEDDING_PROVIDER=huggingface
+HUGGINGFACE_MODEL=all-MiniLM-L6-v2
+
+FAISS_INDEX_PATH=data/faiss_index
 ```
 
-To use **AWS Bedrock**, configure your credentials and set the provider:
+If you use Anthropic:
+```env
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=your_key
+ANTHROPIC_MODEL=claude-3-haiku-20240307
+```
+
+If you use Bedrock:
 ```env
 LLM_PROVIDER=bedrock
 BEDROCK_MODEL_ID=anthropic.claude-3-haiku-20240307-v1:0
@@ -48,73 +56,115 @@ AWS_ACCESS_KEY_ID=your_key
 AWS_SECRET_ACCESS_KEY=your_secret
 ```
 
-### 2. Install Dependencies
-Clone the repository and install the required packages:
-```bash
-pip install -r requirements.txt
+If using Ollama embeddings instead of HuggingFace:
+```env
+EMBEDDING_PROVIDER=ollama
 ```
 
-### 3. Run the Application
-Start the FastAPI server:
+### 3. Ensure Ollama model exists (if using Ollama)
+```powershell
+ollama pull phi
+```
+
+### 4. Run the API
 ```bash
 uvicorn app.main:app --reload
 ```
-The API will be available at `http://127.0.0.1:8000`.
 
-## API Usage
-- **Documentation**: Visit `http://127.0.0.1:8000/docs` for the interactive Swagger UI.
-- **Upload File**: `POST /api/upload` - Upload your CSV or Excel (`.xlsx`, `.xls`) file for indexing, profiling, and automatic summarization.
-- **Query**: `POST /api/query` - Ask questions about your data.
+API root: `http://127.0.0.1:8000`
+Swagger docs: `http://127.0.0.1:8000/docs`
 
-### Multi-File Routing
-The system supports intelligent routing across multiple uploaded files:
-- **With file_path**: Target a specific file explicitly
-  ```json
-  {
-    "query": "What is the average price?",
-    "file_path": "data/sales_2023.csv"
-  }
-  ```
-- **Without file_path**: Let the system automatically select the relevant file
-  ```json
-  {
-    "query": "How many employees were hired last year?"
-  }
-  ```
-  The **FileSelectorAgent** analyzes all uploaded file summaries and routes your query to the most relevant dataset.
+## API
 
-## Architecture
-This project follows a Multi-Agent architecture with intelligent file routing:
-1. **File Selector Agent** (Optional): Determines which file to query based on LLM analysis of file summaries.
-2. **Router Agent**: Classifies the question type (aggregation, lookup, semantic).
-3. **Reasoning Agent**: Generates a valid JSON query plan with dataset context.
-4. **Retriever Agent**: Executes the plan using **deterministic engines** (Pandas) or **semantic engines** (FAISS).
-5. **Answer Agent**: Synthesizes the final result into a human-readable explanation with 0 temperature.
-6. **Summary Agent**: Generates contextual summaries of datasets for better query understanding.
+### `POST /api/upload`
+Uploads and processes a file, registers it in memory, and creates a FAISS index.
 
-*Note: All agents use a unified LLM client that supports Ollama, Anthropic, and AWS Bedrock.*
+Allowed extensions: `.csv`, `.xlsx`, `.xls`
 
+Example:
+```bash
+curl -X POST "http://127.0.0.1:8000/api/upload" \
+  -H "accept: application/json" \
+  -H "Content-Type: multipart/form-data" \
+  -F "file=@data/netflix_titles.csv"
+```
 
+Typical response fields:
+- `message`
+- `file_path`
+- `type`
+- `row_count`
+- `summary`
+- `indexed_chunks`
+- `text_heavy`
 
+### `POST /api/query`
+Runs the full orchestration pipeline.
 
-
-
-
-Sample Query Payload
+Request body:
+```json
 {
   "query": "What is the average release_year?",
-  "file_path": "data/netflix_titles.csv"
+  "file_path": "data/netflix_titles.csv",
+  "chat_id": "session-1"
 }
+```
 
+Notes:
+- `file_path` is optional. If omitted, the File Selector agent picks from uploaded files.
+- `chat_id` is optional. If provided, recent turns are used as routing context.
 
-Response:
+Response shape:
+```json
 {
-  "answer": "The average release year of the data retrieved is 2013.36. This value is based on a sample size of 6,234 data points. Since the data provided is limited to a specific set of records, the average release year may not be representative of the entire population or dataset. Additional context or caveats should be considered when interpreting this result.",
-  "context": [
-    "data: {'release_year': 2013.3593198588387}",
-    "row_count: 6234"
-  ]
+  "answer": "...",
+  "context": ["..."],
+  "metadata": {
+    "execution_time": 0.42,
+    "data_type": "csv",
+    "row_count": 6234,
+    "route": "SQL_ENGINE",
+    "use_routing_agent": true,
+    "route_schema": {}
+  }
 }
+```
 
+## Query Types Supported
+- Numeric analytics: sums, averages, min/max, counts.
+- Filtered retrieval: equality, inequality, `contains`, `in`, `between`, numeric/date comparisons.
+- Grouped analytics: `group_by` + optional `having`.
+- Sorted and limited outputs.
+- Text-table search over long-form columns with keyword and ID scoping.
+- Dataset profiling and semantic summaries.
 
-**For more details, read the DETAILED_README.md file.**
+## Architecture (Current Flow)
+1. Upload flow:
+   - `IngestionService` loads/cleans/profiles data.
+   - `SummaryAgent` generates dataset summary.
+   - `FileRegistry` stores metadata in memory.
+   - `VectorEngine` creates FAISS index.
+2. Query flow:
+   - Optional file auto-selection (`FileSelectorAgent`).
+   - `RouterAgent` selects route and structured schema.
+   - `CSVRetrieverAgent` executes via:
+     - `SQLEngine` for deterministic table ops.
+     - `TextEngine` for text-table semantic retrieval.
+   - `AnswerAgent` synthesizes final answer.
+
+## Important Operational Notes
+- File registry and chat history are in-memory only; restart clears them.
+- Uploaded files are saved under `data/<filename>`.
+- Uploading a file with the same name overwrites the previous file on disk.
+- FAISS indexes are stored under `data/faiss_index/<filename>/`.
+
+## Development
+Run tests:
+```bash
+pytest -q
+```
+
+## Additional Docs
+- `DETAILED_README.md`
+- `API_EXAMPLES.txt`
+- `app/engines/README.md`
