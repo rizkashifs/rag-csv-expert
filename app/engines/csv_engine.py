@@ -222,8 +222,8 @@ class SQLEngine:
             return value
 
     def _normalize_operation_name(self, operation: Any) -> str:
-        token = str(operation or "").strip().lower()
-        return self._OPERATION_ALIASES.get(token, token)
+        op_name = str(operation or "").strip().lower()
+        return self._OPERATION_ALIASES.get(op_name, op_name)
 
     def _extract_requested_operations(self, intent: Dict[str, Any]) -> List[str]:
         operations: List[str] = []
@@ -231,9 +231,9 @@ class SQLEngine:
         def add_operation(op_value: Any) -> None:
             if op_value is None:
                 return
-            raw_tokens = re.split(r"[^a-zA-Z_]+", str(op_value))
-            for token in raw_tokens:
-                normalized = self._normalize_operation_name(token)
+            raw_parts = re.split(r"[^a-zA-Z_]+", str(op_value))
+            for part in raw_parts:
+                normalized = self._normalize_operation_name(part)
                 if normalized in self._SUPPORTED_OPERATIONS and normalized not in operations:
                     operations.append(normalized)
 
