@@ -12,7 +12,23 @@ class RouterAgent(BaseAgent):
     """Route user queries to the best engine and return a structured route schema."""
 
     ROUTES = {"PROFILE_ONLY", "TEXT_TABLE_RAG", "SQL_ENGINE", "REFUSE"}
-    OPERATIONS_REQUIRING_COLUMN = {"sum", "avg", "max", "min", "correlation"}
+    OPERATIONS_REQUIRING_COLUMN = {
+        "sum",
+        "avg",
+        "max",
+        "min",
+        "median",
+        "mode",
+        "std",
+        "variance",
+        "quantile",
+        "histogram",
+        "value_counts",
+        "distinct_count",
+        "null_count",
+        "null_pct",
+        "correlation",
+    }
 
     def __init__(self):
         self.logger = logger
@@ -211,7 +227,7 @@ Return ONLY valid JSON using this schema:
 {{
   "route": "SQL_ENGINE|TEXT_TABLE_RAG|PROFILE_ONLY|REFUSE",
   "schema": {{
-    "operation": "sum|avg|count|max|min|correlation|filter|semantic|profile|none",
+    "operation": "sum|avg|count|max|min|median|mode|std|variance|quantile|histogram|value_counts|distinct_count|null_count|null_pct|correlation|filter|semantic|profile|none",
     "columns": ["ExactColumnNameFromProfile"],
     "filters": [{{"column": "ExactColumnName", "operator": ">", "value": "1000"}}],
     "group_by": [{{"column": "ExactColumnName", "time_grain": "year|month|day|null"}}],
