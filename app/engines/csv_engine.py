@@ -221,6 +221,49 @@ class SQLEngine:
         except Exception:
             return value
 
+    def _build_extrema_context_rows(
+        self,
+        df: pd.DataFrame,
+        operation: str,
+        operation_result: Any,
+        valid_columns: List[str],
+        limit: int,
+    ) -> List[Dict[str, Any]]:
+        if operation not in {"max", "min"}:
+            return []
+        if not isinstance(operation_result, dict) or not operation_result:
+            return []
+
+        metric_col = next((col for col in valid_columns if col in operation_result), None)
+        if not metric_col:
+            metric_col = next(iter(operation_result.keys()), None)
+        if not metric_col:
+            return []
+
+        companion_cols = [col for col in valid_columns if col != metric_col]
+        if not companion_cols:
+            return []
+
+        metric_value = operation_result.get(metric_col)
+        metric_series = pd.to_numeric(df[metric_col], errors="coerce")
+        numeric_target = pd.to_numeric(metric_value, errors="coerce")
+        if pd.isna(numeric_target):
+            return []
+
+        tolerance = max(1e-9, abs(float(numeric_target)) * 1e-9)
+        matched = df[(metric_series - float(numeric_target)).abs() <= tolerance]
+        if matched.empty:
+            matched = df[metric_series == float(numeric_target)]
+        if matched.empty:
+            return []
+
+        output_cols = companion_cols + [metric_col]
+        rows = matched[output_cols].head(limit).to_dict("records")
+        op_word = "Maximum" if operation == "max" else "Minimum"
+        for row in rows:
+            row["_summary"] = f"{op_word} of {metric_col}: {metric_value}"
+        return rows
+
     def _normalize_operation_name(self, operation: Any) -> str:
         op_name = str(operation or "").strip().lower()
         return self._OPERATION_ALIASES.get(op_name, op_name)
@@ -983,6 +1026,20 @@ class SQLEngine:
                     "errors_by_op": errors_by_op,
                 }
                 logger.info(f"Scalar operation(s) complete. scalar_result={scalar_result}")
+                if len(requested_operations) == 1 and operation in {"max", "min"}:
+                    extrema_rows = self._build_extrema_context_rows(
+                        filtered_df,
+                        operation,
+                        results_by_op.get(operation),
+                        valid_columns,
+                        int(limit),
+                    )
+                    if extrema_rows:
+                        sheet_result_rows = extrema_rows
+                        is_scalar = False
+                        logger.info(
+                            f"Materialized extrema context rows for '{name}'. row_count={len(sheet_result_rows)}"
+                        )
 
             if res_df is not None and not res_df.empty and having:
                 logger.info(f"Applying HAVING filters. having={having}")
