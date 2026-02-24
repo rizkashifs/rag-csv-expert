@@ -799,21 +799,80 @@ class SQLEngine:
                 try:
                     logger.info(f"Executing grouped operation. operation={operation}, groupers={final_groupers}")
                     grouped = filtered_df.groupby(final_groupers)
-                    if operation == "sum":
+                    resolved_agg_specs: List[Tuple[str, str]] = []
+                    for agg in intent.get("aggregations") or []:
+                        if not isinstance(agg, dict):
+                            continue
+                        agg_fn = self._normalize_operation_name(agg.get("function"))
+                        requested_col = agg.get("column")
+                        resolved_col = self._resolve_column(filtered_df, requested_col)
+                        if not resolved_col or resolved_col in final_groupers:
+                            continue
+                        if agg_fn in {"sum", "avg", "max", "min", "median", "std", "variance", "count", "distinct_count"}:
+                            resolved_agg_specs.append((agg_fn, resolved_col))
+
+                    if len(resolved_agg_specs) > 1:
+                        logger.info(f"Executing grouped multi-aggregation with specs={resolved_agg_specs}")
+                        work_df = filtered_df.copy()
+                        numeric_ops = {"sum", "avg", "max", "min", "median", "std", "variance"}
+                        numeric_cols = {col for fn, col in resolved_agg_specs if fn in numeric_ops}
+                        for col in numeric_cols:
+                            work_df[col] = pd.to_numeric(work_df[col], errors="coerce")
+
+                        grouped_multi = work_df.groupby(final_groupers)
+                        agg_frames: List[pd.Series] = []
+                        seen_names = set()
+                        for agg_fn, agg_col in resolved_agg_specs:
+                            if agg_fn == "sum":
+                                series = grouped_multi[agg_col].sum()
+                            elif agg_fn == "avg":
+                                series = grouped_multi[agg_col].mean()
+                            elif agg_fn == "max":
+                                series = grouped_multi[agg_col].max()
+                            elif agg_fn == "min":
+                                series = grouped_multi[agg_col].min()
+                            elif agg_fn == "median":
+                                series = grouped_multi[agg_col].median()
+                            elif agg_fn == "std":
+                                series = grouped_multi[agg_col].std()
+                            elif agg_fn == "variance":
+                                series = grouped_multi[agg_col].var()
+                            elif agg_fn == "count":
+                                series = grouped_multi[agg_col].count()
+                            elif agg_fn == "distinct_count":
+                                series = grouped_multi[agg_col].nunique(dropna=True)
+                            else:
+                                continue
+
+                            out_col = f"{agg_fn}_{agg_col}"
+                            if out_col in seen_names:
+                                suffix = 2
+                                while f"{out_col}_{suffix}" in seen_names:
+                                    suffix += 1
+                                out_col = f"{out_col}_{suffix}"
+                            seen_names.add(out_col)
+                            agg_frames.append(series.rename(out_col))
+
+                        if agg_frames:
+                            res_df = pd.concat(agg_frames, axis=1)
+                        else:
+                            res_df = grouped_multi.size().to_frame(name="count")
+                        logger.info(f"Grouped multi-aggregation complete. result_rows={len(res_df)}")
+                    if res_df is None and operation == "sum":
                         res_df = grouped[valid_columns].sum(numeric_only=True)
-                    elif operation == "avg":
+                    elif res_df is None and operation == "avg":
                         res_df = grouped[valid_columns].mean(numeric_only=True)
-                    elif operation == "max":
+                    elif res_df is None and operation == "max":
                         res_df = grouped[valid_columns].max(numeric_only=True)
-                    elif operation == "min":
+                    elif res_df is None and operation == "min":
                         res_df = grouped[valid_columns].min(numeric_only=True)
-                    elif operation == "median":
+                    elif res_df is None and operation == "median":
                         res_df = grouped[valid_columns].median(numeric_only=True)
-                    elif operation == "std":
+                    elif res_df is None and operation == "std":
                         res_df = grouped[valid_columns].std(numeric_only=True)
-                    elif operation == "variance":
+                    elif res_df is None and operation == "variance":
                         res_df = grouped[valid_columns].var(numeric_only=True)
-                    elif operation == "quantile":
+                    elif res_df is None and operation == "quantile":
                         percentile = intent.get("percentile", intent.get("quantile", 0.5))
                         q = float(percentile)
                         if q > 1:
@@ -821,18 +880,18 @@ class SQLEngine:
                         if q < 0 or q > 1:
                             raise ValueError(f"Quantile must be between 0 and 1 (or 0-100), got {percentile}")
                         res_df = grouped[valid_columns].quantile(q, numeric_only=True)
-                    elif operation == "distinct_count":
+                    elif res_df is None and operation == "distinct_count":
                         res_df = grouped[valid_columns].nunique(dropna=True)
-                    elif operation == "null_count":
+                    elif res_df is None and operation == "null_count":
                         res_df = grouped[valid_columns].apply(lambda part: part.isna().sum())
-                    elif operation == "null_pct":
+                    elif res_df is None and operation == "null_pct":
                         def _null_pct(part: pd.DataFrame) -> pd.Series:
                             denominator = len(part)
                             if denominator == 0:
                                 return pd.Series({col: 0.0 for col in valid_columns})
                             return (part[valid_columns].isna().sum() / denominator * 100.0).round(4)
                         res_df = grouped.apply(_null_pct)
-                    elif operation == "mode":
+                    elif res_df is None and operation == "mode":
                         def _group_mode(part: pd.DataFrame) -> pd.Series:
                             out = {}
                             for col in valid_columns:
@@ -843,7 +902,7 @@ class SQLEngine:
                                     out[col] = self._safe_float(series.mode(dropna=True).iloc[0])
                             return pd.Series(out)
                         res_df = grouped.apply(_group_mode)
-                    else:
+                    elif res_df is None:
                         if operation in {"histogram", "value_counts", "correlation", "profile"}:
                             raise ValueError(
                                 f"Operation '{operation}' is not supported together with group_by. "
@@ -851,6 +910,31 @@ class SQLEngine:
                             )
                         res_df = grouped.size().to_frame(name="count")
                     res_df = res_df.reset_index()
+                    should_prefix_single_group_agg = len(resolved_agg_specs) <= 1 and operation in {
+                        "sum",
+                        "avg",
+                        "max",
+                        "min",
+                        "median",
+                        "std",
+                        "variance",
+                        "quantile",
+                        "distinct_count",
+                        "null_count",
+                        "null_pct",
+                        "mode",
+                    }
+                    if should_prefix_single_group_agg:
+                        rename_map: Dict[str, str] = {}
+                        for col in res_df.columns:
+                            if col in final_groupers:
+                                continue
+                            col_name = str(col)
+                            prefixed_name = f"{operation}_{col_name}"
+                            if col_name != prefixed_name:
+                                rename_map[col] = prefixed_name
+                        if rename_map:
+                            res_df = res_df.rename(columns=rename_map)
                     logger.info(f"Grouped operation complete. result_rows={len(res_df)}")
                 except Exception as e:
                     logger.error(f"Grouping failed: {str(e)}")
