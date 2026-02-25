@@ -6,6 +6,22 @@ Both engines share the **same top-level contract** so that all downstream logic 
 
 ---
 
+## CSV vs. Excel (Multi-Sheet) Core Differences
+
+While both engines return the same JSON structure, the **granularity** of the data changes when moving from a single CSV to a multi-sheet Excel workbook.
+
+| Feature | CSV (Single File) | Excel (Multi-Sheet) |
+|---|---|---|
+| **Computation Scope** | Global (entire file) | Local per sheet |
+| **`sheet` Metadata** | Absent (or "default") | Always present |
+| **Aggregations** | Returns 1 result per query | Returns **N results** (1 per sheet) |
+| **Identity** | Rows are raw | Rows injected with `sheet` source |
+
+### The "Federated Search" Principle
+When an Excel file is provided, the engine treats it as a collection of independent tables. A query like *"What is the average price?"* will trigger the engine to compute the average on **every tab** that has a "Price" column. This enables "Federated" responses like *"The average in Tab A is $10, while in Tab B it is $15."*
+
+---
+
 ## Top-Level Shape
 
 Both engines **always** return one of two top-level shapes:
@@ -50,6 +66,7 @@ Triggered by the `SQL_ENGINE` route. Operates with Pandas on the full DataFrame.
 
 The most common case. Raw DataFrame rows serialised as dicts, limited to `intent.limit` (default 10).
 
+**CSV (Single Sheet):**
 ```python
 {
     "relevant_rows": [
@@ -60,12 +77,14 @@ The most common case. Raw DataFrame rows serialised as dicts, limited to `intent
 }
 ```
 
-**With multi-sheet Excel** (extra `sheet` key injected per row):
+**Excel (Multi-Sheet):**
+Each row includes the derived `sheet` metadata to identify its origin.
 ```python
 {
     "relevant_rows": [
-        {"EmployeeID": 1, "Name": "Alice", "sheet": "Q1"},
-        {"EmployeeID": 5, "Name": "Carol", "sheet": "Q2"},
+        {"EmployeeID": 1, "Name": "Alice", "sheet": "Q1_Active"},
+        {"EmployeeID": 2, "Name": "Bob",   "sheet": "Q1_Active"},
+        {"EmployeeID": 5, "Name": "Carol", "sheet": "Q2_Archived"},
     ]
 }
 ```
@@ -105,28 +124,33 @@ When no filter is active:
 
 `operation = "sum" | "avg" | "min" | "max"` — **one row per column** that was computed.
 
+**CSV (Single Sheet):**
+Returns one aggregation per requested column.
 ```python
 {
     "relevant_rows": [
         {
             "Salary": "Average of Salary: 55000.0",
             "_summary": "Average of Salary: 55000.0"
-        },
-        {
-            "Bonus": "Average of Bonus: 5000.0",
-            "_summary": "Average of Bonus: 5000.0"
         }
     ]
 }
 ```
 
-With a filter active, the filter description is appended to `_summary`:
+**Excel (Multi-Sheet) — Federated Aggregation:**
+The engine calculates the average for **every sheet** that contains the target column. This allows the LLM to compare values across categories (e.g. Regions).
 ```python
 {
     "relevant_rows": [
         {
-            "Salary": "Sum of Salary where Department is Eng: 480000.0",
-            "_summary": "Sum of Salary where Department is Eng: 480000.0"
+            "Salary": "Average of Salary: 42000.0",
+            "sheet": "North_Region",
+            "_summary": "[North_Region] Average of Salary: 42000.0"
+        },
+        {
+            "Salary": "Average of Salary: 68000.0",
+            "sheet": "South_Region",
+            "_summary": "[South_Region] Average of Salary: 68000.0"
         }
     ]
 }
