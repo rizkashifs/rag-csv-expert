@@ -55,6 +55,22 @@ class TextEngine:
                 resolved.append(col)
         return resolved
 
+    # ── date handling helpers ─────────────────────────────────────────────────
+
+    def _robust_to_datetime(self, series: pd.Series) -> pd.Series:
+        """
+        Robustly convert a series to datetime handling mixed formats and YYYYMMDD integers.
+        """
+        if pd.api.types.is_integer_dtype(series) or pd.api.types.is_float_dtype(series):
+            sample = series.dropna().head(20)
+            if not sample.empty and all(19000101 <= x <= 21001231 for x in sample if pd.notna(x)):
+                str_series = series.astype(str).str.replace(r"\.0$", "", regex=True)
+                return pd.to_datetime(str_series, format="%Y%m%d", errors="coerce")
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            return pd.to_datetime(series, errors="coerce", dayfirst=True, format="mixed")
+
     # ── refusal (same format as SQLEngine) ───────────────────────────────────
 
     def _refusal_payload(
@@ -147,19 +163,55 @@ class TextEngine:
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
-            datetime_series = pd.to_datetime(series, errors="coerce")
-            datetime_value = pd.to_datetime(value, errors="coerce") if value is not None else pd.NaT
+            datetime_series = self._robust_to_datetime(series)
+            datetime_value = pd.to_datetime(value, errors="coerce", dayfirst=True) if value is not None else pd.NaT
         datetime_valid = datetime_series.notna().sum() > 0
 
         try:
             if op in {"=", "==", "eq"}:
                 if pd.notna(numeric_value) and numeric_series.notna().sum() > 0:
                     return df[numeric_series == numeric_value]
+                if datetime_valid:
+                    # Year matching helper
+                    if bool(re.fullmatch(r"\d{4}", value_text)):
+                        return df[datetime_series.dt.year == int(value_text)]
+                    
+                    # Robust partial date matching
+                    try:
+                        p = pd.Period(value_text)
+                        if p.freqstr.startswith("A"):
+                            return df[datetime_series.dt.year == p.year]
+                        if p.freqstr.startswith("Q"):
+                            return df[(datetime_series.dt.year == p.year) & (datetime_series.dt.quarter == p.quarter)]
+                        if p.freqstr.startswith("M"):
+                            return df[(datetime_series.dt.year == p.year) & (datetime_series.dt.month == p.month)]
+                    except Exception:
+                        pass
+
+                    if pd.notna(datetime_value):
+                        return df[datetime_series == datetime_value]
                 return df[text_series.str.lower() == value_text.lower()]
 
             if op in {"!=", "<>", "neq"}:
                 if pd.notna(numeric_value) and numeric_series.notna().sum() > 0:
                     return df[numeric_series != numeric_value]
+                if datetime_valid:
+                    if bool(re.fullmatch(r"\d{4}", value_text)):
+                        return df[datetime_series.dt.year != int(value_text)]
+                    
+                    try:
+                        p = pd.Period(value_text)
+                        if p.freqstr.startswith("A"):
+                            return df[datetime_series.dt.year != p.year]
+                        if p.freqstr.startswith("Q"):
+                            return df[(datetime_series.dt.year != p.year) | (datetime_series.dt.quarter != p.quarter)]
+                        if p.freqstr.startswith("M"):
+                            return df[(datetime_series.dt.year != p.year) | (datetime_series.dt.month != p.month)]
+                    except Exception:
+                        pass
+
+                    if pd.notna(datetime_value):
+                        return df[datetime_series != datetime_value]
                 return df[text_series.str.lower() != value_text.lower()]
 
             if op in {"contains", "like"}:

@@ -104,6 +104,25 @@ class SQLEngine:
         logger.info(f"Checking if value looks like year. value={value}, is_year={is_year}")
         return is_year
 
+    def _robust_to_datetime(self, series: pd.Series) -> pd.Series:
+        """
+        Robustly convert a series to datetime handling mixed formats and YYYYMMDD integers.
+        """
+        # 1. Handle YYYYMMDD integers or floats
+        if pd.api.types.is_integer_dtype(series) or pd.api.types.is_float_dtype(series):
+            # Check if values look like YYYYMMDD
+            sample = series.dropna().head(20)
+            if not sample.empty and all(19000101 <= x <= 21001231 for x in sample if pd.notna(x)):
+                logger.info("Detected YYYYMMDD integer date format. Converting...")
+                str_series = series.astype(str).str.replace(r"\.0$", "", regex=True)
+                return pd.to_datetime(str_series, format="%Y%m%d", errors="coerce")
+
+        # 2. Standard parsing with 'mixed' and 'dayfirst'
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            # 'mixed' handles different formats in the same series (Pandas 2.0+)
+            return pd.to_datetime(series, errors="coerce", dayfirst=True, format="mixed")
+
     def _refusal_payload(
         self,
         summary: str,
@@ -351,9 +370,7 @@ class SQLEngine:
                     summary_parts.append(f"Avg: {round(num_series.mean(), 2)}")
                 else:
                     # Try Date
-                    with warnings.catch_warnings():
-                        warnings.simplefilter("ignore", UserWarning)
-                        dt_series = pd.to_datetime(series, errors="coerce")
+                    dt_series = self._robust_to_datetime(series)
                     if dt_series.notna().sum() > 0:
                         summary_parts.append(f"Min Date: {dt_series.min().strftime('%Y-%m-%d')}")
                         summary_parts.append(f"Max Date: {dt_series.max().strftime('%Y-%m-%d')}")
@@ -551,8 +568,8 @@ class SQLEngine:
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
-            datetime_series = pd.to_datetime(series, errors="coerce")
-            datetime_value = pd.to_datetime(value, errors="coerce") if value is not None else pd.NaT
+            datetime_series = self._robust_to_datetime(series)
+            datetime_value = pd.to_datetime(value, errors="coerce", dayfirst=True) if value is not None else pd.NaT
         datetime_valid = datetime_series.notna().sum() > 0
 
         text_series = series.astype(str).str.strip()
@@ -572,8 +589,22 @@ class SQLEngine:
             if pd.notna(numeric_value) and numeric_series.notna().sum() > 0:
                 return df[numeric_series == numeric_value]
             if datetime_valid:
+                # Year matching (e.g. "2023")
                 if self._looks_like_year(value):
                     return df[datetime_series.dt.year == int(value_text)]
+                
+                # Robust partial date matching (Month, Quarter, Year)
+                try:
+                    p = pd.Period(value_text)
+                    if p.freqstr.startswith("A"):  # Annual
+                        return df[datetime_series.dt.year == p.year]
+                    if p.freqstr.startswith("Q"):  # Quarterly
+                        return df[(datetime_series.dt.year == p.year) & (datetime_series.dt.quarter == p.quarter)]
+                    if p.freqstr.startswith("M"):  # Monthly
+                        return df[(datetime_series.dt.year == p.year) & (datetime_series.dt.month == p.month)]
+                except Exception:
+                    pass
+
                 if pd.notna(datetime_value):
                     return df[datetime_series == datetime_value]
             return df[text_series.str.lower() == value_text.lower()]
@@ -613,8 +644,8 @@ class SQLEngine:
 
                 # Try datetime second
                 if datetime_valid:
-                    low_dt = pd.to_datetime(low_val, errors="coerce")
-                    high_dt = pd.to_datetime(high_val, errors="coerce")
+                    low_dt = pd.to_datetime(low_val, errors="coerce", dayfirst=True)
+                    high_dt = pd.to_datetime(high_val, errors="coerce", dayfirst=True)
                     if pd.notna(low_dt) and pd.notna(high_dt):
                         return df[(datetime_series >= low_dt) & (datetime_series <= high_dt)]
 
@@ -704,9 +735,7 @@ class SQLEngine:
             if numeric_ratio >= 0.7:
                 sort_key = numeric_series
             else:
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore", UserWarning)
-                    datetime_series = pd.to_datetime(tmp_df[col], errors="coerce")
+                datetime_series = self._robust_to_datetime(tmp_df[col])
                 datetime_ratio = datetime_series.notna().mean()
                 if datetime_ratio >= 0.7:
                     sort_key = datetime_series
@@ -736,7 +765,8 @@ class SQLEngine:
         group_by = intent.get("group_by", [])
         having = intent.get("having", [])
         sort = intent.get("sort", [])
-        limit = intent.get("limit") or 10
+        limit_val = intent.get("limit")
+        limit = int(limit_val) if limit_val is not None else 1000
 
         logger.info(f"Starting execution with operation: {operation}")
         logger.info(
@@ -797,9 +827,8 @@ class SQLEngine:
 
                 if time_grain and str(time_grain).lower() not in ("none", "null"):
                     try:
-                        if not pd.api.types.is_datetime64_any_dtype(filtered_df[resolved_col_name]):
-                            filtered_df[resolved_col_name] = pd.to_datetime(filtered_df[resolved_col_name], errors="coerce")
-                        
+                        filtered_df[resolved_col_name] = self._robust_to_datetime(filtered_df[resolved_col_name])
+
                         grain = str(time_grain).lower()
                         truncated_col = f"{resolved_col_name}_{grain}"
                         dt_series = filtered_df[resolved_col_name].dt

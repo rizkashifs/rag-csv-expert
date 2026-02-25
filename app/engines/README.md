@@ -64,7 +64,7 @@ Triggered by the `SQL_ENGINE` route. Operates with Pandas on the full DataFrame.
 
 ### 1. Tabular Rows — `filter` / `none` / `group_by`
 
-The most common case. Raw DataFrame rows serialised as dicts, limited to `intent.limit` (default 10).
+The most common case. Raw DataFrame rows serialised as dicts, limited to `intent.limit` (default 1000).
 
 **CSV (Single Sheet):**
 ```python
