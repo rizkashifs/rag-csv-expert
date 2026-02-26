@@ -787,12 +787,41 @@ class SQLEngine:
 
         for name, df in dataframes.items():
             logger.info(f"Processing sheet/dataframe: {name} (Initial rows: {len(df)})")
+            
+            # --- Virtual 'sheet' column support ---
+            # If any filters target a column named 'sheet', we check them against the current sheet name.
+            # This allows queries like "filter to only rows in sheet summary".
+            sheet_filters = [f for f in filters if str(f.get("column")).lower() == "sheet"]
+            should_skip_sheet = False
+            for sf in sheet_filters:
+                val = str(sf.get("value", "")).strip().lower()
+                op = str(sf.get("operator", "=")).strip().lower()
+                if op in ("=", "==", "eq", "is"):
+                    if val != name.lower():
+                        should_skip_sheet = True
+                elif op in ("!=", "<>", "neq", "is not"):
+                    if val == name.lower():
+                        should_skip_sheet = True
+                elif op in ("contains", "like"):
+                    if val not in name.lower():
+                        should_skip_sheet = True
+                
+                if should_skip_sheet:
+                    logger.info(f"Skipping sheet '{name}' due to sheet filter mismatch. val={val}, op={op}")
+                    break
+            
+            if should_skip_sheet:
+                continue
+
+            # Remove 'sheet' filters before passing to _apply_single_filter to avoid 'column not found' errors
+            active_filters = [f for f in filters if str(f.get("column")).lower() != "sheet"]
+
             filtered_df = df.copy()
             logger.info(f"Created working copy of dataframe '{name}'. columns={list(filtered_df.columns)}")
 
-            if filters:
-                logger.info(f"Applying {len(filters)} filters")
-                for filter_spec in filters:
+            if active_filters:
+                logger.info(f"Applying {len(active_filters)} active filters")
+                for filter_spec in active_filters:
                     filtered_df = self._apply_single_filter(filtered_df, filter_spec, processing_issues)
                     logger.info(f"Filter applied. filter_spec={filter_spec}, current_rows={len(filtered_df)}")
                 logger.info(f"Rows after filtering: {len(filtered_df)}")

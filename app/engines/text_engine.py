@@ -327,17 +327,44 @@ class TextEngine:
         for sheet_name, df in dataframes.items():
             logger.info(f"TextEngine processing sheet: {sheet_name} ({len(df)} rows)")
 
+            # --- Virtual 'sheet' row scoping ---
+            # Check both id_filters and post_filters for sheet-level scoping matches
+            all_potential_sheet_filters = (id_filters or []) + (post_filters or [])
+            sheet_filters = [f for f in all_potential_sheet_filters if str(f.get("column")).lower() == "sheet"]
+            should_skip_sheet = False
+            for sf in sheet_filters:
+                val = str(sf.get("value", "")).strip().lower()
+                op = str(sf.get("operator", "=")).strip().lower()
+                if op in ("=", "==", "eq", "is"):
+                    if val != sheet_name.lower():
+                        should_skip_sheet = True
+                elif op in ("!=", "<>", "neq", "is not"):
+                    if val == sheet_name.lower():
+                        should_skip_sheet = True
+                elif op in ("contains", "like"):
+                    if val not in sheet_name.lower():
+                        should_skip_sheet = True
+                
+                if should_skip_sheet:
+                    logger.info(f"TextEngine skipping sheet '{sheet_name}' due to sheet mismatch.")
+                    break
+            
+            if should_skip_sheet:
+                continue
+
+            # Filter out virtual 'sheet' filters to avoid 'column not found' errors in resolved steps
+            active_id_filters = [f for f in id_filters if str(f.get("column")).lower() != "sheet"]
+            active_post_filters = [f for f in post_filters if str(f.get("column")).lower() != "sheet"]
+
             working_df = df.copy()
 
             # ── step 1: apply id_filters to scope rows ───────────────────────
-            if id_filters:
-                working_df = self._apply_id_filters(working_df, id_filters, processing_issues)
+            if active_id_filters:
+                working_df = self._apply_id_filters(working_df, active_id_filters, processing_issues)
                 logger.info(f"After id_filters: {len(working_df)} rows remain")
 
             if working_df.empty:
-                processing_issues.append(
-                    "No rows matched the ID filter — the ID may not exist in the dataset."
-                )
+                # If we were searching for a specific ID and it's not here, it's a legitimate miss for this sheet
                 continue
 
             # ── step 2: resolve text columns to search ───────────────────────
@@ -397,7 +424,7 @@ class TextEngine:
                 continue
 
             # ── step 5: apply post_filters ────────────────────────────────────
-            for pf in post_filters:
+            for pf in active_post_filters:
                 matched_df = self._apply_post_filter(matched_df, pf, processing_issues)
                 logger.info(f"After post-filter {pf}: {len(matched_df)} rows")
 
