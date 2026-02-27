@@ -620,8 +620,50 @@ class SQLEngine:
             return df[text_series.str.lower() != value_text.lower()]
 
         if op in {"contains", "like"}:
+            if datetime_valid:
+                clean_val = value_text.replace("%", "").replace("*", "").strip("-/")
+                if self._looks_like_year(clean_val):
+                    return df[datetime_series.dt.year == int(clean_val)]
+                try:
+                    p = pd.Period(clean_val)
+                    if p.freqstr.startswith("A"):
+                        return df[datetime_series.dt.year == p.year]
+                    if p.freqstr.startswith("Q"):
+                        return df[(datetime_series.dt.year == p.year) & (datetime_series.dt.quarter == p.quarter)]
+                    if p.freqstr.startswith("M"):
+                        return df[(datetime_series.dt.year == p.year) & (datetime_series.dt.month == p.month)]
+                except Exception:
+                    pass
+                    
+            if op == "like":
+                # Translate SQL wildcards to regex
+                import re
+                regex_val = "^" + re.escape(value_text).replace(r"\%", ".*").replace(r"\_", ".") + "$"
+                return df[text_series.str.contains(regex_val, case=False, na=False, regex=True)]
+            
             return df[text_series.str.contains(value_text, case=False, na=False)]
+            
         if op in {"not contains", "not_contains", "not like"}:
+            if datetime_valid:
+                clean_val = value_text.replace("%", "").replace("*", "").strip("-/")
+                if self._looks_like_year(clean_val):
+                    return df[datetime_series.dt.year != int(clean_val)]
+                try:
+                    p = pd.Period(clean_val)
+                    if p.freqstr.startswith("A"):
+                        return df[datetime_series.dt.year != p.year]
+                    if p.freqstr.startswith("Q"):
+                        return df[~((datetime_series.dt.year == p.year) & (datetime_series.dt.quarter == p.quarter))]
+                    if p.freqstr.startswith("M"):
+                        return df[~((datetime_series.dt.year == p.year) & (datetime_series.dt.month == p.month))]
+                except Exception:
+                    pass
+
+            if op == "not like":
+                import re
+                regex_val = "^" + re.escape(value_text).replace(r"\%", ".*").replace(r"\_", ".") + "$"
+                return df[~text_series.str.contains(regex_val, case=False, na=False, regex=True)]
+
             return df[~text_series.str.contains(value_text, case=False, na=False)]
 
         if op in {"in", "not in", "not_in"}:
