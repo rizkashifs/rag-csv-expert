@@ -191,6 +191,20 @@ def test_router_prompt_instructs_model_to_preserve_sheet_scope():
     assert "schema.sql_plan.filters" in prompt
 
 
+def test_router_prompt_instructs_model_to_preserve_semantic_sheet_scope():
+    agent = RouterAgent()
+    prompt = agent._build_llm_prompt(
+        query="find comments about delays in Sheet2",
+        dataset_profile="Columns: notes (str), sheet (str)",
+        semantic_summary="Workbook feedback data",
+        history_text="",
+        text_heavy=True,
+    )
+
+    assert "semantic_plan.post_filters" in prompt
+    assert '{"column": "sheet", "operator": "=", "value": "Sheet1"}' in prompt
+
+
 def test_router_refuses_when_shared_column_exists_in_multiple_sheets_without_sheet_filter(monkeypatch):
     agent = RouterAgent()
 
