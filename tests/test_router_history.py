@@ -174,3 +174,18 @@ def test_router_refuses_when_sql_intent_is_incomplete(monkeypatch):
     assert result["route"] == "REFUSE"
     assert "follow_up_questions" in result["schema"]
     assert any("numeric column" in question.lower() for question in result["schema"]["follow_up_questions"])
+
+
+def test_router_prompt_instructs_model_to_preserve_sheet_scope():
+    agent = RouterAgent()
+    prompt = agent._build_llm_prompt(
+        query="count the number of males in Sheet1",
+        dataset_profile="Columns: Gender (str)",
+        semantic_summary="Workbook data",
+        history_text="",
+        text_heavy=False,
+    )
+
+    assert 'column "sheet"' in prompt
+    assert '{"column": "sheet", "operator": "=", "value": "Sheet1"}' in prompt
+    assert "schema.sql_plan.filters" in prompt

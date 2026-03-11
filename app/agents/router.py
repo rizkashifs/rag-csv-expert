@@ -85,11 +85,6 @@ class RouterAgent(BaseAgent):
         )
         return schema
 
-
-
-
-
-
     def _sync_sql_schema_layers(self, normalized: Dict[str, Any]) -> Dict[str, Any]:
         sql_plan = normalized.get("sql_plan") or {}
 
@@ -202,6 +197,7 @@ CRITICAL:
    You MUST map their terms to the CLOSEST VALID COLUMN NAME from the "Dataset Profile". 
    If a column does not exist, do not invent one.
 2. Typos: Fix obvious typos in column names or values.
+3. Sheet Intent: If the user explicitly mentions a worksheet/tab/sheet name such as "Sheet1", "sheet 2", or "Employees", preserve that scope as a SQL filter using column "sheet". Do not ignore explicit sheet scope when the same column exists in multiple sheets.
 
 Routes:
 - PROFILE_ONLY: schema/profile/summary requests.
@@ -266,6 +262,10 @@ INSTRUCTIONS for semantic_plan fields:
 - id_filters: if the user references a specific row by any identifier (e.g. "employee 1234", "order #99"), set column and value here.
 - target_text_columns: the dataset columns that contain free-text to search within.
 - post_filters: additional column filters (operator/value) to apply AFTER the text search has matched rows.
+
+INSTRUCTIONS for SQL sheet scoping:
+- If the query says "in Sheet1", "from Employees sheet", "only Sheet2", or otherwise names a worksheet/tab, add a filter like {{"column": "sheet", "operator": "=", "value": "Sheet1"}}.
+- Keep the same sheet filter in both top-level schema.filters and schema.sql_plan.filters for SQL_ENGINE routes.
 """.strip()
 
     def run(self, input_data: dict) -> dict:
