@@ -286,8 +286,9 @@ class TextEngine:
         Returns: {"relevant_rows": [{"col": val, ..., "_summary": str}]}
         """
         # ── unpack dataframes ────────────────────────────────────────────────
+        is_multi_dataframe_input = isinstance(df_input, dict)
         dataframes: Dict[str, pd.DataFrame] = (
-            df_input if isinstance(df_input, dict) else {"default": df_input}
+            df_input if is_multi_dataframe_input else {"default": df_input}
         )
         schema_context = "\n".join(
             [f"{name}: {', '.join(map(str, df.columns))}" for name, df in dataframes.items()]
@@ -326,11 +327,16 @@ class TextEngine:
 
         for sheet_name, df in dataframes.items():
             logger.info(f"TextEngine processing sheet: {sheet_name} ({len(df)} rows)")
+            use_virtual_sheet_filters = is_multi_dataframe_input or "sheet" not in df.columns
 
             # --- Virtual 'sheet' row scoping ---
             # Check both id_filters and post_filters for sheet-level scoping matches
             all_potential_sheet_filters = (id_filters or []) + (post_filters or [])
-            sheet_filters = [f for f in all_potential_sheet_filters if str(f.get("column")).lower() == "sheet"]
+            sheet_filters = (
+                [f for f in all_potential_sheet_filters if str(f.get("column")).lower() == "sheet"]
+                if use_virtual_sheet_filters
+                else []
+            )
             should_skip_sheet = False
             for sf in sheet_filters:
                 val = str(sf.get("value", "")).strip().lower()
@@ -353,8 +359,16 @@ class TextEngine:
                 continue
 
             # Filter out virtual 'sheet' filters to avoid 'column not found' errors in resolved steps
-            active_id_filters = [f for f in id_filters if str(f.get("column")).lower() != "sheet"]
-            active_post_filters = [f for f in post_filters if str(f.get("column")).lower() != "sheet"]
+            active_id_filters = (
+                [f for f in id_filters if str(f.get("column")).lower() != "sheet"]
+                if use_virtual_sheet_filters
+                else list(id_filters)
+            )
+            active_post_filters = (
+                [f for f in post_filters if str(f.get("column")).lower() != "sheet"]
+                if use_virtual_sheet_filters
+                else list(post_filters)
+            )
 
             working_df = df.copy()
 

@@ -189,3 +189,70 @@ def test_router_prompt_instructs_model_to_preserve_sheet_scope():
     assert 'column "sheet"' in prompt
     assert '{"column": "sheet", "operator": "=", "value": "Sheet1"}' in prompt
     assert "schema.sql_plan.filters" in prompt
+
+
+def test_router_refuses_when_shared_column_exists_in_multiple_sheets_without_sheet_filter(monkeypatch):
+    agent = RouterAgent()
+
+    monkeypatch.setattr(
+        "app.agents.router.llm_client.generate",
+        lambda messages, options=None: (
+            '{"route":"SQL_ENGINE","schema":{"operation":"count","columns":["Gender"],'
+            '"filters":[{"column":"Gender","operator":"=","value":"Male"}]}}'
+        ),
+    )
+
+    result = agent.run({
+        "query": "count the number of males",
+        "dataset_profile": "\n".join(
+            [
+                "Workbook with 3 sheets",
+                "Total rows: 8, Max columns :3",
+                "Sheets:",
+                "Sheet1: rows = 3, cols=3, columns=[Gender,Age,Dept]",
+                "Sheet2: rows = 3, cols=3, columns=[Gender,Salary,Dept]",
+                "Sheet3: rows = 2, cols=2, columns=[Region,Sales]",
+                "Columns (union): Gender,Age,Dept,Salary,Region,Sales",
+            ]
+        ),
+        "semantic_summary": "Workbook data",
+        "text_heavy": False,
+        "history": [],
+    })
+
+    assert result["route"] == "REFUSE"
+    assert any("which sheet should i use" in q.lower() for q in result["schema"]["follow_up_questions"])
+
+
+def test_router_allows_shared_column_when_sheet_filter_is_present(monkeypatch):
+    agent = RouterAgent()
+
+    monkeypatch.setattr(
+        "app.agents.router.llm_client.generate",
+        lambda messages, options=None: (
+            '{"route":"SQL_ENGINE","schema":{"operation":"count","columns":["Gender"],'
+            '"filters":[{"column":"sheet","operator":"=","value":"Sheet1"},'
+            '{"column":"Gender","operator":"=","value":"Male"}]}}'
+        ),
+    )
+
+    result = agent.run({
+        "query": "count the number of males in Sheet1",
+        "dataset_profile": "\n".join(
+            [
+                "Workbook with 3 sheets",
+                "Total rows: 8, Max columns :3",
+                "Sheets:",
+                "Sheet1: rows = 3, cols=3, columns=[Gender,Age,Dept]",
+                "Sheet2: rows = 3, cols=3, columns=[Gender,Salary,Dept]",
+                "Sheet3: rows = 2, cols=2, columns=[Region,Sales]",
+                "Columns (union): Gender,Age,Dept,Salary,Region,Sales",
+            ]
+        ),
+        "semantic_summary": "Workbook data",
+        "text_heavy": False,
+        "history": [],
+    })
+
+    assert result["route"] == "SQL_ENGINE"
+    assert any(f["column"] == "sheet" for f in result["schema"]["filters"])

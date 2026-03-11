@@ -2,8 +2,10 @@ import pytest
 import pandas as pd
 import os
 import io
+from unittest.mock import patch
 from app.services.ingestion import IngestionService
 from app.engines.csv_engine import CSVEngine
+from app.engines.text_engine import TextEngine
 
 @pytest.fixture
 def ingestion_service():
@@ -12,6 +14,10 @@ def ingestion_service():
 @pytest.fixture
 def csv_engine():
     return CSVEngine()
+
+@pytest.fixture
+def text_engine():
+    return TextEngine()
 
 def test_read_csv_basic(ingestion_service, tmp_path):
     # Create a simple CSV
@@ -36,6 +42,44 @@ def test_read_csv_cleaning(ingestion_service, tmp_path):
     assert "name" in result["schema"]
     assert "age" in result["schema"]
     assert result["row_count"] == 2 # Empty rows dropped
+
+def test_read_csv_includes_flat_rows(ingestion_service, tmp_path):
+    csv_content = "id,name,age\n123,Alice,30\n124,Bob,25"
+    csv_file = tmp_path / "flat.csv"
+    csv_file.write_text(csv_content)
+
+    result = ingestion_service.read_csv(str(csv_file))
+
+    assert result["flat_rows"] == [
+        {"id": "123", "name": "Alice", "age": 30},
+        {"id": "124", "name": "Bob", "age": 25},
+    ]
+
+def test_read_excel_includes_flat_rows_with_sheet_scope(ingestion_service, tmp_path):
+    excel_file = tmp_path / "multi.xlsx"
+    with patch("app.services.ingestion.pd.read_excel") as mock_read_excel:
+        mock_read_excel.return_value = {
+            "sheet1": pd.DataFrame(
+                {
+                    "id": [123, 124],
+                    "Gender": ["Male", "Male"],
+                }
+            ),
+            "sheet2": pd.DataFrame(
+                {
+                    "id": [124],
+                    "Age": [45],
+                }
+            ),
+        }
+
+        result = ingestion_service.read_csv(str(excel_file))
+
+    assert result["flat_rows"] == [
+        {"sheet": "sheet1", "id": "123", "Gender": "Male"},
+        {"sheet": "sheet1", "id": "124", "Gender": "Male"},
+        {"sheet": "sheet2", "id": "124", "Age": 45},
+    ]
 
 def test_csv_engine_operations(csv_engine):
     df = pd.DataFrame({
@@ -195,3 +239,52 @@ def test_csv_engine_stat_extensions(csv_engine):
         },
     )
     assert "Distinct Count:" in distinct["relevant_rows"][0]["salary"]
+
+def test_csv_engine_uses_real_sheet_column_for_flattened_excel_rows(csv_engine):
+    df = pd.DataFrame(
+        [
+            {"sheet": "Sheet1", "id": "123", "Gender": "Male"},
+            {"sheet": "Sheet1", "id": "124", "Gender": "Female"},
+            {"sheet": "Sheet2", "id": "201", "Gender": "Male"},
+        ]
+    )
+
+    result = csv_engine.execute(
+        df,
+        {
+            "operation": "count",
+            "columns": ["Gender"],
+            "filters": [
+                {"column": "sheet", "operator": "=", "value": "Sheet1"},
+                {"column": "Gender", "operator": "=", "value": "Male"},
+            ],
+        },
+    )
+
+    assert result["relevant_rows"][0]["count"] == "Count: 1"
+    assert "sheet is Sheet1" in result["relevant_rows"][0]["_summary"]
+
+def test_text_engine_uses_real_sheet_column_for_flattened_excel_rows(text_engine):
+    df = pd.DataFrame(
+        [
+            {"sheet": "Sheet1", "id": "123", "notes": "engineer in platform team"},
+            {"sheet": "Sheet1", "id": "124", "notes": "analyst in finance team"},
+            {"sheet": "Sheet2", "id": "201", "notes": "engineer in sales ops"},
+        ]
+    )
+
+    result = text_engine.execute(
+        df,
+        {
+            "semantic_plan": {
+                "query_text": "engineer",
+                "keywords": ["engineer"],
+                "target_text_columns": ["notes"],
+                "post_filters": [{"column": "sheet", "operator": "=", "value": "Sheet1"}],
+            }
+        },
+    )
+
+    assert len(result["relevant_rows"]) == 1
+    assert result["relevant_rows"][0]["sheet"] == "Sheet1"
+    assert result["relevant_rows"][0]["id"] == "123"

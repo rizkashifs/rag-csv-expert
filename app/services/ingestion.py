@@ -40,6 +40,28 @@ class IngestionService:
     def _sanitize_chunk_id_value(self, value: Any) -> str:
         return str(value).replace("|", "_")
 
+    def _build_flat_rows(self, df: pd.DataFrame, sheet_name: str = "") -> List[Dict[str, Any]]:
+        flat_rows: List[Dict[str, Any]] = []
+        explicit_id_column = next((str(col).strip() for col in df.columns if str(col).strip().lower() == "id"), None)
+
+        for row_idx, row in df.iterrows():
+            row_dict = row.to_dict()
+            normalized_row = {
+                str(key).strip(): (value.item() if hasattr(value, "item") else value)
+                for key, value in row_dict.items()
+            }
+
+            if sheet_name:
+                normalized_row = {"sheet": sheet_name, **normalized_row}
+            if explicit_id_column:
+                normalized_row["id"] = str(normalized_row[explicit_id_column])
+            else:
+                normalized_row["id"] = str(row_idx)
+
+            flat_rows.append(normalized_row)
+
+        return flat_rows
+
     def _detect_text_columns(self, df: pd.DataFrame) -> Tuple[bool, List[str]]:
         text_columns = []
         for col in df.columns:
@@ -159,6 +181,7 @@ class IngestionService:
                     "text_heavy": False
                 }
                 cleaned_sheets = {}
+                flat_rows: List[Dict[str, Any]] = []
                 all_text_chunks = []
                 all_structured_chunks: List[Dict[str, Any]] = []
                 text_heavy = False
@@ -171,6 +194,7 @@ class IngestionService:
                     df.columns = [re.sub(r'[^\w\s]', '', str(col).strip()) for col in df.columns]
                     df.fillna("N/A", inplace=True)
                     cleaned_sheets[name] = df
+                    flat_rows.extend(self._build_flat_rows(df, sheet_name=name))
                     
                     profile = self._generate_data_profile(df, sheet_name=name)
                     all_profiles.append(self._format_profile_for_llm(profile))
@@ -213,6 +237,7 @@ class IngestionService:
                     "text_heavy": text_heavy,
                     "text_columns": text_columns,
                     "text_chunks": all_text_chunks,
+                    "flat_rows": flat_rows,
                     "structured_chunks": all_structured_chunks,
                     "metadata": metadata
                 }
@@ -236,6 +261,7 @@ class IngestionService:
                 sample_data = df.head(5).to_markdown(index=False)
                 text_heavy = self.is_text_heavy_csv(df)
                 text_columns = self._detect_text_columns(df)[1]
+                flat_rows = self._build_flat_rows(df)
                 if text_heavy:
                     text_chunks, structured_chunks = self._chunk_text_columns(df, text_columns)
                 else:
@@ -256,6 +282,7 @@ class IngestionService:
                     "text_heavy": text_heavy,
                     "text_columns": text_columns,
                     "text_chunks": text_chunks,
+                    "flat_rows": flat_rows,
                     "structured_chunks": structured_chunks,
                     "metadata": metadata
                 }

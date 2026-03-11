@@ -1,6 +1,7 @@
 import time
 import os
 from typing import Dict, Any, Optional
+import pandas as pd
 from app.agents.router import RouterAgent
 from app.agents.reasoning import CSVReasoningAgent
 from app.agents.retriever import CSVRetrieverAgent
@@ -26,6 +27,53 @@ class OrchestrationService:
         self.summary_agent = SummaryAgent()
         self.file_selector = FileSelectorAgent()
         self.refusal_agent = RefusalAgent()
+
+    def _build_router_dataset_profile(self, df: Any, data_type: str, row_count: int, schema_context: str) -> str:
+        if data_type == "excel" and isinstance(df, dict):
+            sheet_names = list(df.keys())
+            max_columns = max((len(sheet_df.columns) for sheet_df in df.values()), default=0)
+
+            union_columns = []
+            seen_columns = set()
+            for sheet_df in df.values():
+                for column in sheet_df.columns.tolist():
+                    column_name = str(column).strip()
+                    lowered = column_name.lower()
+                    if lowered in seen_columns:
+                        continue
+                    seen_columns.add(lowered)
+                    union_columns.append(column_name)
+
+            lines = [
+                f"Workbook with {len(sheet_names)} sheets",
+                f"Total rows: {row_count}, Max columns :{max_columns}",
+                "Sheets:",
+            ]
+
+            for sheet_name, sheet_df in df.items():
+                column_list = ",".join(map(str, sheet_df.columns.tolist()))
+                lines.append(
+                    f"{sheet_name}: rows = {len(sheet_df)}, cols={len(sheet_df.columns)}, columns=[{column_list}]"
+                )
+
+            lines.append(f"Columns (union): {','.join(union_columns)}")
+            return "\n".join(lines)
+
+        if data_type == "csv" and hasattr(df, "columns"):
+            column_list = ",".join(map(str, df.columns.tolist()))
+            return "\n".join(
+                [
+                    f"Rows: {row_count}, Columns: {len(df.columns)}",
+                    f"Columns: {column_list}",
+                ]
+            )
+
+        return schema_context
+
+    def _build_engine_dataframe(self, df: Any, flat_rows: Any) -> Any:
+        if isinstance(flat_rows, list) and flat_rows:
+            return pd.DataFrame(flat_rows)
+        return df
 
     def register_data(self, file_path: str, data_bundle: Optional[Dict[str, Any]] = None):
         """
@@ -72,18 +120,22 @@ class OrchestrationService:
             logger.info("Using cached file info from registry.")
             df_data = ingestion_service.load_data(file_path) # Need actual DF for retrieval
             df = df_data["df"]
+            engine_df = self._build_engine_dataframe(df, df_data.get("flat_rows"))
             schema_context = cached_info["schema_context"]
             file_summary = cached_info["summary"]
             row_count = cached_info["row_count"]
             data_type = cached_info["type"]
             text_heavy = cached_info.get("text_heavy", False)
+            router_dataset_profile = self._build_router_dataset_profile(df, data_type, row_count, schema_context)
         else:
             data_bundle = ingestion_service.load_data(file_path)
             df = data_bundle["df"]
+            engine_df = self._build_engine_dataframe(df, data_bundle.get("flat_rows"))
             schema_context = data_bundle["semantic_context"]
             row_count = data_bundle["row_count"]
             data_type = data_bundle.get("type", "csv")
             text_heavy = data_bundle.get("text_heavy", False)
+            router_dataset_profile = self._build_router_dataset_profile(df, data_type, row_count, schema_context)
             
             # Generate summary if not in registry
             sample_data = data_bundle.get("sample_data") or ""
@@ -101,7 +153,7 @@ class OrchestrationService:
         try:
             route_info = self.router.run({
                 "query": query,
-                "dataset_profile": schema_context,
+                "dataset_profile": router_dataset_profile,
                 "semantic_summary": file_summary,
                 "text_heavy": text_heavy,
                 "history": get_history(chat_id)
@@ -175,7 +227,7 @@ class OrchestrationService:
             retrieved_data = self.retriever.run({
                 "query": query,
                 "intent": route_schema or {"operation": "semantic"},
-                "df": df,
+                "df": engine_df,
                 "engine_type": "TEXT_TABLE_RAG"
             })
             logger.info(f"Data retrieved in {time.time() - retrieve_start:.2f}s")
@@ -223,7 +275,7 @@ class OrchestrationService:
         retrieved_data = self.retriever.run({
             "query": query,
             "intent": route_schema or intent,
-            "df": df,
+            "df": engine_df,
             "index_name": index_name,
             "engine_type": "sql_engine"
         })

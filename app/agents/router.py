@@ -119,6 +119,86 @@ class RouterAgent(BaseAgent):
         schema.update({"reason": reason, "follow_up_questions": follow_up_questions})
         return schema
 
+    def _extract_sheet_columns_from_profile(self, dataset_profile: str) -> Dict[str, List[str]]:
+        if not dataset_profile or "Workbook with" not in dataset_profile:
+            return {}
+
+        sheet_columns: Dict[str, List[str]] = {}
+        for line in dataset_profile.splitlines():
+            line = line.strip()
+            if not line or line in {"Sheets:"} or line.startswith("Workbook with") or line.startswith("Total rows:") or line.startswith("Columns (union):"):
+                continue
+
+            match = re.match(r"([^:]+):\s*rows\s*=\s*\d+,\s*cols\s*=\s*\d+,\s*columns=\[(.*)\]", line)
+            if not match:
+                continue
+
+            sheet_name = match.group(1).strip()
+            columns_text = match.group(2).strip()
+            columns = [col.strip() for col in columns_text.split(",") if col.strip()]
+            sheet_columns[sheet_name] = columns
+
+        return sheet_columns
+
+    def _schema_has_sheet_filter(self, schema: Dict[str, Any]) -> bool:
+        return any(
+            isinstance(item, dict) and str(item.get("column", "")).strip().lower() == "sheet"
+            for item in (schema.get("filters") or [])
+        )
+
+    def _collect_referenced_columns(self, schema: Dict[str, Any]) -> List[str]:
+        referenced: List[str] = []
+        seen = set()
+
+        def add(value: Any) -> None:
+            if value is None:
+                return
+            text = str(value).strip()
+            if not text:
+                return
+            lowered = text.lower()
+            if lowered == "sheet" or lowered in seen:
+                return
+            seen.add(lowered)
+            referenced.append(text)
+
+        for col in schema.get("columns") or []:
+            add(col)
+
+        for key in ("filters", "group_by", "having", "aggregations", "sort"):
+            for item in schema.get(key) or []:
+                if isinstance(item, dict):
+                    add(item.get("column"))
+                elif key == "group_by":
+                    add(item)
+
+        return referenced
+
+    def _get_ambiguous_sheet_question(self, schema: Dict[str, Any], dataset_profile: str) -> Optional[str]:
+        sheet_columns = self._extract_sheet_columns_from_profile(dataset_profile)
+        if len(sheet_columns) < 2 or self._schema_has_sheet_filter(schema):
+            return None
+
+        referenced_columns = self._collect_referenced_columns(schema)
+        if not referenced_columns:
+            return None
+
+        ambiguous_sheets = set()
+        for column in referenced_columns:
+            matches = [
+                sheet_name
+                for sheet_name, columns in sheet_columns.items()
+                if any(existing.lower() == column.lower() for existing in columns)
+            ]
+            if len(matches) > 1:
+                ambiguous_sheets.update(matches)
+
+        if not ambiguous_sheets:
+            return None
+
+        joined = ", ".join(sorted(ambiguous_sheets))
+        return f"Which sheet should I use: {joined}?"
+
     def _clarification_questions_for_schema(self, schema: Dict[str, Any]) -> List[str]:
         operation = (schema.get("operation") or "none").lower()
         questions = []
@@ -128,7 +208,7 @@ class RouterAgent(BaseAgent):
             questions.append("Please specify two numeric columns to compute correlation.")
         return questions
 
-    def _should_refuse(self, route: str, schema: Dict[str, Any], query: str) -> Optional[Dict[str, Any]]:
+    def _should_refuse(self, route: str, schema: Dict[str, Any], query: str, dataset_profile: str = "") -> Optional[Dict[str, Any]]:
         if route not in {"SQL_ENGINE", "TEXT_TABLE_RAG"}:
             return None
 
@@ -141,6 +221,10 @@ class RouterAgent(BaseAgent):
             has_filter_language = bool(re.search(r"\bwhere\b|\bfilter\b|\bgreater than\b|\bless than\b|>=|<=|!=|=|>|<", query, re.IGNORECASE))
             if has_filter_language and not schema.get("filters"):
                 questions.append("What exact filter condition should I apply (column, operator, value)?")
+
+            ambiguous_sheet_question = self._get_ambiguous_sheet_question(schema, dataset_profile)
+            if ambiguous_sheet_question:
+                questions.append(ambiguous_sheet_question)
 
             if questions:
                 return {
@@ -301,7 +385,7 @@ INSTRUCTIONS for SQL sheet scoping:
             
             if route in self.ROUTES:
                 normalized = self._normalize_schema(route, parsed.get("schema", {}), raw_query)
-                refused = self._should_refuse(route, normalized, raw_query)
+                refused = self._should_refuse(route, normalized, raw_query, dataset_profile)
                 return refused or {"route": route, "use_routing_agent": True, "schema": normalized}
         except Exception as e:
             self.logger.error(f"Router LLM failed: {e}") 

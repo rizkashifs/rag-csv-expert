@@ -820,7 +820,8 @@ class SQLEngine:
             logger.info("Converting dict-style filters to list-style")
             filters = [{"column": k, "operator": "=", "value": v} for k, v in filters.items()]
 
-        dataframes = df_input if isinstance(df_input, dict) else {"default": df_input}
+        is_multi_dataframe_input = isinstance(df_input, dict)
+        dataframes = df_input if is_multi_dataframe_input else {"default": df_input}
         logger.info(f"Processing {len(dataframes)} dataframe(s). dataframe_names={list(dataframes.keys())}")
         schema_context = "\n".join([f"{name}: {', '.join(map(str, df.columns))}" for name, df in dataframes.items()])
 
@@ -829,11 +830,15 @@ class SQLEngine:
 
         for name, df in dataframes.items():
             logger.info(f"Processing sheet/dataframe: {name} (Initial rows: {len(df)})")
-            
+            use_virtual_sheet_filters = is_multi_dataframe_input or "sheet" not in df.columns
+
             # --- Virtual 'sheet' column support ---
-            # If any filters target a column named 'sheet', we check them against the current sheet name.
-            # This allows queries like "filter to only rows in sheet summary".
-            sheet_filters = [f for f in filters if str(f.get("column")).lower() == "sheet"]
+            # Only needed when Excel sheets are still represented as separate dataframes.
+            sheet_filters = (
+                [f for f in filters if str(f.get("column")).lower() == "sheet"]
+                if use_virtual_sheet_filters
+                else []
+            )
             should_skip_sheet = False
             for sf in sheet_filters:
                 val = str(sf.get("value", "")).strip().lower()
@@ -855,8 +860,12 @@ class SQLEngine:
             if should_skip_sheet:
                 continue
 
-            # Remove 'sheet' filters before passing to _apply_single_filter to avoid 'column not found' errors
-            active_filters = [f for f in filters if str(f.get("column")).lower() != "sheet"]
+            # Remove virtual sheet filters before passing to _apply_single_filter.
+            active_filters = (
+                [f for f in filters if str(f.get("column")).lower() != "sheet"]
+                if use_virtual_sheet_filters
+                else list(filters)
+            )
 
             filtered_df = df.copy()
             logger.info(f"Created working copy of dataframe '{name}'. columns={list(filtered_df.columns)}")
