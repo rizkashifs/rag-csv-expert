@@ -1,6 +1,13 @@
 from typing import List, Dict, Any
 
 
+def _truncate_text(text: str, max_length: int = 200) -> str:
+    text = text.strip()
+    if len(text) <= max_length:
+        return text
+    return text[: max_length - 3].rstrip() + "..."
+
+
 def truncate_history(history: List[Dict[str, Any]], max_user_turns: int = 5) -> str:
     """
     Truncate and format chat history for LLM context.
@@ -10,37 +17,27 @@ def truncate_history(history: List[Dict[str, Any]], max_user_turns: int = 5) -> 
         max_user_turns: Maximum number of user turns to keep (default: 5)
     
     Returns:
-        Formatted history string with the latest assistant message (if any)
-        followed by the last N user prompts
+        Formatted history string with the last N conversation turns.
+        Assistant messages are truncated to 200 characters.
     """
     if not history:
         return ""
 
-    latest_assistant = ""
-    for turn in reversed(history):
-        assistant_text = turn.get("assistant", "").strip()
-        if assistant_text:
-            latest_assistant = assistant_text
-            break
+    recent_turns = history[-max_user_turns:]
+    formatted_lines = []
 
-    # Extract only user prompts from the last N turns
-    user_prompts = []
-    for turn in reversed(history):
+    for turn in recent_turns:
         user_query = turn.get("user", "").strip()
+        assistant_text = turn.get("assistant", "").strip()
+
         if user_query:
-            user_prompts.append(user_query)
-            if len(user_prompts) >= max_user_turns:
-                break
-    
-    # Reverse to maintain chronological order
-    user_prompts.reverse()
-    
-    # Format with the most recent assistant message first, then numbered user prompts
-    if not user_prompts and not latest_assistant:
+            formatted_lines.append(f"User: {user_query}")
+        if assistant_text:
+            formatted_lines.append(
+                f"Assistant: {_truncate_text(assistant_text, max_length=200)}"
+            )
+
+    if not formatted_lines:
         return ""
 
-    formatted_lines = []
-    if latest_assistant:
-        formatted_lines.append(f"Assistant: {latest_assistant}")
-    formatted_lines.extend(f"{i+1}. {prompt}" for i, prompt in enumerate(user_prompts))
     return "\n".join(formatted_lines)

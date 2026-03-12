@@ -211,7 +211,7 @@ def test_router_prompt_instructs_model_to_resolve_follow_up_scope_from_recent_qu
         query="what is the average age in this?",
         dataset_profile="Columns: Name (str), Age (int), Notes (str)",
         semantic_summary="Employee records with free-text notes",
-        history_text="1. find rows where the text mentions Chasse",
+        history_text="User: find rows where the text mentions Chasse",
         text_heavy=True,
     )
 

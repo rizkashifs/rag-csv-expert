@@ -282,18 +282,18 @@ CRITICAL:
    If a column does not exist, do not invent one.
 2. Typos: Fix obvious typos in column names or values.
 3. Sheet Intent: If the user explicitly mentions a worksheet/tab/sheet name such as "Sheet1", "sheet 2", or "Employees", preserve that scope as a filter using column "sheet". For SQL routes use schema.filters / schema.sql_plan.filters. For semantic routes use semantic_plan.post_filters.
-4. Follow-up Resolution: If the current query uses references like "this", "these", "those", "them", "that", "that result", or "in this", resolve that reference using the most recent relevant item in Recent User Queries.
-   - Preserve the prior query's scope unless the current query explicitly overrides it.
-   - If the prior query was a semantic/text-match request, keep that semantic scope when interpreting the follow-up.
+4. Follow-up Resolution: If the current query uses references like "this", "these", "those", "them", "that", "that result", or "in this", resolve that reference using the most recent relevant item in Recent Conversation History.
+   - Infer the prior query's scope from the conversation history unless the current query explicitly overrides it.
+   - If the prior query was a semantic/text-match request, preserve that semantic scope when interpreting the follow-up.
    - If the current query asks for an aggregation over "this/these" (for example count, average, sum, min, max), interpret it as applying the aggregation to the rows scoped by the prior query, not the full dataset.
 
 Follow-up examples:
-- Recent User Queries:
-  1. find rows where the text mentions Chasse
+- Recent Conversation History:
+  User: find rows where the text mentions Chasse
   Current User Query: what is the average age in this?
   Expected behavior: Route to SQL_ENGINE for the aggregation, but preserve the prior semantic scope of rows mentioning "Chasse".
-- Recent User Queries:
-  1. show comments mentioning delays in Sheet1
+- Recent Conversation History:
+  User: show comments mentioning delays in Sheet1
   Current User Query: count these by department
   Expected behavior: Route to SQL_ENGINE and preserve both the text condition "delays" and the sheet filter "Sheet1".
 
@@ -310,7 +310,7 @@ Dataset Profile:
 Dataset Summary:
 {semantic_summary}
 
-Recent User Queries (for context):
+Recent Conversation History:
 {history_text}
 
 Text-Heavy Dataset: {text_heavy}
