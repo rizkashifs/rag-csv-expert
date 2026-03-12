@@ -14,7 +14,7 @@ def test_truncate_history_single_turn():
         {"user": "What is the total sales?", "assistant": "The total sales is $1000"}
     ]
     result = truncate_history(history)
-    assert result == "1. What is the total sales?"
+    assert result == "Assistant: The total sales is $1000\n1. What is the total sales?"
 
 
 def test_truncate_history_multiple_turns():
@@ -25,7 +25,7 @@ def test_truncate_history_multiple_turns():
         {"user": "Group by region", "assistant": "Grouped by region..."},
     ]
     result = truncate_history(history)
-    expected = "1. Show me the data\n2. What is the average?\n3. Group by region"
+    expected = "Assistant: Grouped by region...\n1. Show me the data\n2. What is the average?\n3. Group by region"
     assert result == expected
 
 
@@ -41,7 +41,7 @@ def test_truncate_history_max_turns():
         {"user": "Query 7", "assistant": "Response 7"},
     ]
     result = truncate_history(history, max_user_turns=5)
-    expected = "1. Query 3\n2. Query 4\n3. Query 5\n4. Query 6\n5. Query 7"
+    expected = "Assistant: Response 7\n1. Query 3\n2. Query 4\n3. Query 5\n4. Query 6\n5. Query 7"
     assert result == expected
 
 
@@ -53,7 +53,7 @@ def test_truncate_history_custom_max():
         {"user": "Query 3", "assistant": "Response 3"},
     ]
     result = truncate_history(history, max_user_turns=2)
-    expected = "1. Query 2\n2. Query 3"
+    expected = "Assistant: Response 3\n1. Query 2\n2. Query 3"
     assert result == expected
 
 
@@ -65,7 +65,7 @@ def test_truncate_history_missing_user_key():
         {"user": "Query 3", "assistant": "Response 3"},
     ]
     result = truncate_history(history)
-    expected = "1. Query 1\n2. Query 3"
+    expected = "Assistant: Response 3\n1. Query 1\n2. Query 3"
     assert result == expected
 
 
@@ -77,5 +77,17 @@ def test_truncate_history_empty_user_values():
         {"user": "Query 3", "assistant": "Response 3"},
     ]
     result = truncate_history(history)
-    expected = "1. Query 1\n2. Query 3"
+    expected = "Assistant: Response 3\n1. Query 1\n2. Query 3"
+    assert result == expected
+
+
+def test_truncate_history_keeps_latest_assistant_for_short_follow_up_context():
+    history = [
+        {"user": "Find rows where the text mentions Chasse", "assistant": "Which sheet should I use?"},
+        {"user": "Sheet1", "assistant": "Using Sheet1."},
+    ]
+
+    result = truncate_history(history)
+
+    expected = "Assistant: Using Sheet1.\n1. Find rows where the text mentions Chasse\n2. Sheet1"
     assert result == expected

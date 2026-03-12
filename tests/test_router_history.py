@@ -205,6 +205,21 @@ def test_router_prompt_instructs_model_to_preserve_semantic_sheet_scope():
     assert '{"column": "sheet", "operator": "=", "value": "Sheet1"}' in prompt
 
 
+def test_router_prompt_instructs_model_to_resolve_follow_up_scope_from_recent_queries():
+    agent = RouterAgent()
+    prompt = agent._build_llm_prompt(
+        query="what is the average age in this?",
+        dataset_profile="Columns: Name (str), Age (int), Notes (str)",
+        semantic_summary="Employee records with free-text notes",
+        history_text="1. find rows where the text mentions Chasse",
+        text_heavy=True,
+    )
+
+    assert 'uses references like "this", "these", "those"' in prompt
+    assert 'preserve the prior semantic scope of rows mentioning "Chasse"' in prompt
+    assert 'interpret it as applying the aggregation to the rows scoped by the prior query' in prompt
+
+
 def test_router_refuses_when_shared_column_exists_in_multiple_sheets_without_sheet_filter(monkeypatch):
     agent = RouterAgent()
 
