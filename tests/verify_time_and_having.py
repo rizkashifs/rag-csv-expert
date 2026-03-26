@@ -28,7 +28,7 @@ def test_time_and_having():
     assert len(data1) == 2
     # Check if 'Date_year' or similar exists and values are correct
     item_2024 = next(item for item in data1 if "2024" in str(item.values()))
-    assert item_2024["Sales"] == 700
+    assert item_2024["sum_Sales"] == 700
 
     # Test 2: HAVING Clause
     # Group by Region, Sum Sales.
@@ -45,6 +45,7 @@ def test_time_and_having():
     data2 = res2["relevant_rows"]
     assert len(data2) == 1
     assert data2[0]["Region"] == "South"
+    assert data2[0]["sum_Sales"] == 550
 
     print("\n--- All Tests Passed ---")
 
