@@ -18,7 +18,8 @@ class IngestionService:
         avg_len_threshold: int = 100
     ) -> bool:
         for col in df.columns:
-            if df[col].dtype != object:
+            # Support both legacy object dtype and pandas 2.x StringDtype
+            if not (pd.api.types.is_object_dtype(df[col]) or pd.api.types.is_string_dtype(df[col])):
                 continue
 
             sample = df[col].dropna().head(sample_size)
@@ -65,7 +66,8 @@ class IngestionService:
     def _detect_text_columns(self, df: pd.DataFrame) -> Tuple[bool, List[str]]:
         text_columns = []
         for col in df.columns:
-            if not pd.api.types.is_object_dtype(df[col]):
+            # Support both legacy object dtype and pandas 2.x StringDtype
+            if not (pd.api.types.is_object_dtype(df[col]) or pd.api.types.is_string_dtype(df[col])):
                 continue
             series = df[col].dropna().astype(str)
             if series.empty:
@@ -90,7 +92,8 @@ class IngestionService:
         if not text_columns:
             return chunks, structured_chunks
 
-        stacked = df.loc[:, text_columns].stack(dropna=True)
+        # pandas 2.x removed the dropna parameter from stack(); filter NaN rows manually
+        stacked = df.loc[:, text_columns].stack(future_stack=True).dropna()
         if stacked.empty:
             return chunks, structured_chunks
 
@@ -253,7 +256,10 @@ class IngestionService:
                 # Cleaning
                 df.dropna(how='all', inplace=True)
                 df.columns = [re.sub(r'[^\w\s]', '', col.strip()) for col in df.columns]
-                df.fillna("N/A", inplace=True)
+                # pandas 2.x raises TypeError when filling NaN into numeric columns with a
+                # string value, so only fill text (object / StringDtype) columns.
+                for _col in df.select_dtypes(include=["object", "string"]).columns:
+                    df[_col] = df[_col].fillna("N/A")
 
                 # Profiling
                 profile = self._generate_data_profile(df)
