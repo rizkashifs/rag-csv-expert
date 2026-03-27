@@ -117,11 +117,17 @@ class SQLEngine:
                 str_series = series.astype(str).str.replace(r"\.0$", "", regex=True)
                 return pd.to_datetime(str_series, format="%Y%m%d", errors="coerce")
 
-        # 2. Standard parsing with 'mixed' and 'dayfirst'
+        # 2. Detect ISO-style format (YYYY-… / YYYY/…) vs. day-first ambiguous format (DD/MM/YYYY).
+        # Using dayfirst=True unconditionally misparsed ISO dates on Pandas 2.0+ with format="mixed"
+        # (e.g. "2023-01-05" → May 1 instead of Jan 5).  We detect the dominant format first.
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
-            # 'mixed' handles different formats in the same series (Pandas 2.0+)
-            return pd.to_datetime(series, errors="coerce", dayfirst=True, format="mixed")
+            non_null_str = series.dropna().astype(str).head(20)
+            use_dayfirst = (
+                not non_null_str.empty
+                and not non_null_str.str.match(r"^\d{4}[-/T]").all()
+            )
+            return pd.to_datetime(series, errors="coerce", dayfirst=use_dayfirst, format="mixed")
 
     def _refusal_payload(
         self,
@@ -569,8 +575,17 @@ class SQLEngine:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
             datetime_series = self._robust_to_datetime(series)
-            datetime_value = pd.to_datetime(value, errors="coerce", dayfirst=True) if value is not None else pd.NaT
+            datetime_value = pd.to_datetime(value, errors="coerce", dayfirst=False) if value is not None else pd.NaT
         datetime_valid = datetime_series.notna().sum() > 0
+
+        # If the column looks like YYYYMMDD integers, treat it as datetime and skip the
+        # raw numeric comparison so that year shortcuts like "2023" work correctly.
+        _is_yyyymmdd_int = (
+            datetime_valid
+            and (pd.api.types.is_integer_dtype(series) or pd.api.types.is_float_dtype(series))
+            and numeric_series.notna().sum() > 0
+            and numeric_series.dropna().head(20).between(19000101, 21001231).all()
+        )
 
         text_series = series.astype(str).str.strip()
         value_text = "" if value is None else str(value).strip()
@@ -586,7 +601,7 @@ class SQLEngine:
                 return df[series.notna() & (text_series != "")]
 
         if op in {"=", "==", "eq"}:
-            if pd.notna(numeric_value) and numeric_series.notna().sum() > 0:
+            if pd.notna(numeric_value) and numeric_series.notna().sum() > 0 and not _is_yyyymmdd_int:
                 return df[numeric_series == numeric_value]
             if datetime_valid:
                 # Year matching (e.g. "2023")
@@ -610,7 +625,7 @@ class SQLEngine:
             return df[text_series.str.lower() == value_text.lower()]
 
         if op in {"!=", "<>", "neq"}:
-            if pd.notna(numeric_value) and numeric_series.notna().sum() > 0:
+            if pd.notna(numeric_value) and numeric_series.notna().sum() > 0 and not _is_yyyymmdd_int:
                 return df[numeric_series != numeric_value]
             if datetime_valid:
                 if self._looks_like_year(value):
@@ -636,9 +651,19 @@ class SQLEngine:
                     pass
                     
             if op == "like":
-                # Translate SQL wildcards to regex
-                import re
-                regex_val = "^" + re.escape(value_text).replace(r"\%", ".*").replace(r"\_", ".") + "$"
+                # Translate SQL wildcards (%, _) to regex.
+                # re.escape() in Python 3.7+ does NOT escape '%', so we must convert
+                # wildcards before escaping the surrounding literal parts.
+                parts = re.split(r"(%|_)", value_text)
+                regex_parts = []
+                for part in parts:
+                    if part == "%":
+                        regex_parts.append(".*")
+                    elif part == "_":
+                        regex_parts.append(".")
+                    else:
+                        regex_parts.append(re.escape(part))
+                regex_val = "^" + "".join(regex_parts) + "$"
                 return df[text_series.str.contains(regex_val, case=False, na=False, regex=True)]
             
             return df[text_series.str.contains(value_text, case=False, na=False)]
@@ -660,8 +685,16 @@ class SQLEngine:
                     pass
 
             if op == "not like":
-                import re
-                regex_val = "^" + re.escape(value_text).replace(r"\%", ".*").replace(r"\_", ".") + "$"
+                parts = re.split(r"(%|_)", value_text)
+                regex_parts = []
+                for part in parts:
+                    if part == "%":
+                        regex_parts.append(".*")
+                    elif part == "_":
+                        regex_parts.append(".")
+                    else:
+                        regex_parts.append(re.escape(part))
+                regex_val = "^" + "".join(regex_parts) + "$"
                 return df[~text_series.str.contains(regex_val, case=False, na=False, regex=True)]
 
             return df[~text_series.str.contains(value_text, case=False, na=False)]
@@ -698,7 +731,7 @@ class SQLEngine:
             return df
 
         if op in {">", "<", ">=", "<="}:
-            if pd.notna(numeric_value) and numeric_series.notna().sum() > 0:
+            if pd.notna(numeric_value) and numeric_series.notna().sum() > 0 and not _is_yyyymmdd_int:
                 if op == ">":
                     return df[numeric_series > numeric_value]
                 if op == "<":
@@ -1153,8 +1186,21 @@ class SQLEngine:
             if res_df is not None and not res_df.empty and having:
                 logger.info(f"Applying HAVING filters. having={having}")
                 for h in having:
-                    res_df = self._apply_single_filter(res_df, h, processing_issues)
-                    logger.info(f"Applied HAVING filter. filter={h}, current_rows={len(res_df)}")
+                    h_resolved = dict(h)
+                    raw_having_col = h_resolved.get("column")
+                    if raw_having_col and self._resolve_column(res_df, raw_having_col) is None:
+                        # Column was likely renamed by aggregation prefix (e.g., Sales → sum_Sales).
+                        # Try common prefixes so HAVING works transparently.
+                        for prefix in [operation] + ["sum", "avg", "count", "min", "max", "median", "std", "variance"]:
+                            candidate = f"{prefix}_{raw_having_col}"
+                            if self._resolve_column(res_df, candidate) is not None:
+                                h_resolved["column"] = candidate
+                                logger.info(
+                                    f"HAVING column '{raw_having_col}' resolved to prefixed name '{candidate}'"
+                                )
+                                break
+                    res_df = self._apply_single_filter(res_df, h_resolved, processing_issues)
+                    logger.info(f"Applied HAVING filter. filter={h_resolved}, current_rows={len(res_df)}")
 
             if res_df is not None and not res_df.empty and sort:
                 res_df = self._sort_dataframe(res_df, sort)
