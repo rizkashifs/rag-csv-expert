@@ -1203,7 +1203,21 @@ class SQLEngine:
                     logger.info(f"Applied HAVING filter. filter={h_resolved}, current_rows={len(res_df)}")
 
             if res_df is not None and not res_df.empty and sort:
-                res_df = self._sort_dataframe(res_df, sort)
+                # After grouped aggregation, columns may be renamed (e.g. Sales → sum_Sales).
+                # Resolve sort column names against operation-prefixed names so sorting works.
+                resolved_sort = []
+                for s in sort:
+                    s_copy = dict(s)
+                    raw_sort_col = s_copy.get("column")
+                    if raw_sort_col and self._resolve_column(res_df, raw_sort_col) is None:
+                        for prefix in [operation] + ["sum", "avg", "count", "min", "max", "median", "std", "variance"]:
+                            candidate = f"{prefix}_{raw_sort_col}"
+                            if self._resolve_column(res_df, candidate) is not None:
+                                s_copy["column"] = candidate
+                                logger.info(f"Sort column '{raw_sort_col}' resolved to prefixed name '{candidate}'")
+                                break
+                    resolved_sort.append(s_copy)
+                res_df = self._sort_dataframe(res_df, resolved_sort)
 
             if res_df is not None:
                 sheet_result_rows = res_df.head(limit).to_dict("records")
