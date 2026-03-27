@@ -67,9 +67,16 @@ class TextEngine:
                 str_series = series.astype(str).str.replace(r"\.0$", "", regex=True)
                 return pd.to_datetime(str_series, format="%Y%m%d", errors="coerce")
 
+        # Detect ISO-style format (YYYY-… or YYYY/…) to avoid dayfirst misparse in Pandas 2.x.
+        # Using dayfirst=True with format="mixed" misparsed "2023-01-05" as May 1 instead of Jan 5.
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", UserWarning)
-            return pd.to_datetime(series, errors="coerce", dayfirst=True, format="mixed")
+            non_null_str = series.dropna().astype(str).head(20)
+            use_dayfirst = (
+                not non_null_str.empty
+                and not non_null_str.str.match(r"^\d{4}[-/T]").all()
+            )
+            return pd.to_datetime(series, errors="coerce", dayfirst=use_dayfirst, format="mixed")
 
     # ── refusal (same format as SQLEngine) ───────────────────────────────────
 

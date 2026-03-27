@@ -215,7 +215,17 @@ class RouterAgent(BaseAgent):
         operation = (schema.get("operation") or "none").lower()
         if route == "SQL_ENGINE":
             questions = self._clarification_questions_for_schema(schema)
-            if operation == "none":
+            # Only ask for clarification when the schema has NO actionable content at all.
+            # Intents like {"operation": "none", "filters": [...]} are valid row-retrieval
+            # queries and must be allowed through — operation="none" is explicitly supported.
+            has_actionable_content = bool(
+                schema.get("filters")
+                or schema.get("group_by")
+                or schema.get("sort")
+                or schema.get("columns")
+                or schema.get("aggregations")
+            )
+            if operation == "none" and not has_actionable_content:
                 questions.append("Do you want a sum, average, count, min/max, or filtered rows?")
 
             has_filter_language = bool(re.search(r"\bwhere\b|\bfilter\b|\bgreater than\b|\bless than\b|>=|<=|!=|=|>|<", query, re.IGNORECASE))
@@ -388,12 +398,17 @@ INSTRUCTIONS for SQL sheet scoping:
         try:
             response = llm_client.generate([{"role": "user", "content": prompt}], options={"temperature": 0.0})
             
-            # Cleanup JSON block if markdown fences exist
+            # Strip markdown code fences produced by some LLMs.
+            # split("```")[-1] is wrong: it returns the empty string AFTER the closing fence.
+            # Instead take the first interior block (index 1 in the split result).
             clean_response = response.strip()
             if "```json" in clean_response:
-                clean_response = clean_response.split("```json")[-1].split("```")[0].strip()
+                clean_response = clean_response.split("```json")[1].split("```")[0].strip()
             elif "```" in clean_response:
-                clean_response = clean_response.split("```")[-1].split("```")[0].strip()
+                parts = clean_response.split("```")
+                # parts[1] is the content of the first fenced block; strip optional lang tag
+                content = parts[1] if len(parts) > 1 else clean_response
+                clean_response = re.sub(r"^[a-z]+\s*\n", "", content, count=1).strip()
             
             parsed = json.loads(clean_response)
             route = parsed.get("route", "").upper().strip()

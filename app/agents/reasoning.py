@@ -49,7 +49,18 @@ class CSVReasoningAgent(BaseAgent):
         logger.info("Received reasoning response from Anthropic.")
         
         try:
-            return json.loads(response.strip())
+            # Strip markdown code fences (e.g. ```json ... ```) before parsing.
+            # split("```")[-1] incorrectly returns the empty string after the closing fence,
+            # so we take the first interior block at index [1] instead.
+            clean = response.strip()
+            if "```json" in clean:
+                clean = clean.split("```json")[1].split("```")[0].strip()
+            elif "```" in clean:
+                parts = clean.split("```")
+                content = parts[1] if len(parts) > 1 else clean
+                import re as _re
+                clean = _re.sub(r"^[a-z]+\s*\n", "", content, count=1).strip()
+            return json.loads(clean)
         except Exception:
             # Fallback for parsing issues
             return {
