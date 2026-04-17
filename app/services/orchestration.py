@@ -158,9 +158,11 @@ class OrchestrationService:
                 "text_heavy": text_heavy,
                 "history": get_history(chat_id)
             })
-            route = route_info["route"]
-            route_schema = route_info.get("schema", {})
-            use_routing_agent = route_info.get("use_routing_agent", False)
+            # Router now returns {"engine": ..., "params": {"schema": ...}, "explain": ...}
+            route = (route_info.get("engine") or route_info.get("route", "")).upper().strip()
+            params = route_info.get("params") or {}
+            route_schema = params.get("schema") or route_info.get("schema") or {}
+            use_routing_agent = route_info.get("use_routing_agent", True)
         except Exception as e:
             logger.error(f"Router CRASHED: {e}.")
             return {

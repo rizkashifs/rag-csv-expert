@@ -1,5 +1,6 @@
 import json
 import re
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from app.agents.base import BaseAgent
@@ -12,6 +13,7 @@ class RouterAgent(BaseAgent):
     """Route user queries to the best engine and return a structured route schema."""
 
     ROUTES = {"PROFILE_ONLY", "TEXT_TABLE_RAG", "SQL_ENGINE", "REFUSE"}
+    CONFIDENCE_THRESHOLD = 0.5
     OPERATIONS_REQUIRING_COLUMN = {
         "sum",
         "avg",
@@ -37,7 +39,6 @@ class RouterAgent(BaseAgent):
         return {
             "operation": operation,
             "columns": [],
-            "filters": [],
             "filters": [],
             "group_by": [],
             "having": [],
@@ -88,7 +89,6 @@ class RouterAgent(BaseAgent):
     def _sync_sql_schema_layers(self, normalized: Dict[str, Any]) -> Dict[str, Any]:
         sql_plan = normalized.get("sql_plan") or {}
 
-        # Pull nested plan fields up for the SQL executor, then push normalized values back down.
         if not normalized.get("columns"):
             normalized["columns"] = list(sql_plan.get("target_columns") or [])
         if not normalized.get("filters"):
@@ -208,12 +208,41 @@ class RouterAgent(BaseAgent):
             questions.append("Please specify two numeric columns to compute correlation.")
         return questions
 
+    def _is_multi_intent_sql(self, schema: Dict[str, Any]) -> bool:
+        """Deterministic backstop: detect contradictory schema patterns the LLM missed."""
+        aggregations = schema.get("aggregations") or []
+        limit = schema.get("limit")
+        sort = schema.get("sort") or []
+        operation = (schema.get("operation") or "none").lower()
+
+        if len(aggregations) >= 2 and limit and int(limit) <= 5 and sort:
+            return True
+
+        if operation in ("value_counts", "histogram") and (aggregations or (sort and limit)):
+            return True
+
+        return False
+
     def _should_refuse(self, route: str, schema: Dict[str, Any], query: str, dataset_profile: str = "") -> Optional[Dict[str, Any]]:
         if route not in {"SQL_ENGINE", "TEXT_TABLE_RAG"}:
             return None
 
         operation = (schema.get("operation") or "none").lower()
         if route == "SQL_ENGINE":
+            if self._is_multi_intent_sql(schema):
+                return {
+                    "route": "REFUSE",
+                    "use_routing_agent": True,
+                    "schema": self._build_refusal_schema(
+                        "multi_intent_query",
+                        [
+                            "Your question contains multiple analytical requests that each need a separate query. "
+                            "Please ask one at a time for accurate results. For example, start with: "
+                            "'Give me a distribution summary for Total Incurred.'"
+                        ],
+                    ),
+                }
+
             questions = self._clarification_questions_for_schema(schema)
             # Only ask for clarification when the schema has NO actionable content at all.
             # Intents like {"operation": "none", "filters": [...]} are valid row-retrieval
@@ -282,13 +311,13 @@ class RouterAgent(BaseAgent):
         history_text: str,
         text_heavy: bool,
     ) -> str:
-        return f"""
+        template = """
 You are a router for a CSV/Excel analytics assistant.
 Your goal is to route the user's query to the correct engine and structure the intent (columns, operations, filters).
 
 CRITICAL:
-1. Column Mapping: The user may type column names inexactly (e.g., "sales" instead of "Total Sales" or "revenue" instead of "Rev_2023"). 
-   You MUST map their terms to the CLOSEST VALID COLUMN NAME from the "Dataset Profile". 
+1. Column Mapping: The user may type column names inexactly (e.g., "sales" instead of "Total Sales" or "revenue" instead of "Rev_2023").
+   You MUST map their terms to the CLOSEST VALID COLUMN NAME from the "Dataset Profile".
    If a column does not exist, do not invent one.
 2. Typos: Fix obvious typos in column names or values.
 3. Sheet Intent: If the user explicitly mentions a worksheet/tab/sheet name such as "Sheet1", "sheet 2", or "Employees", preserve that scope as a filter using column "sheet". For SQL routes use schema.filters / schema.sql_plan.filters. For semantic routes use semantic_plan.post_filters.
@@ -307,12 +336,26 @@ Follow-up examples:
   Current User Query: count these by department
   Expected behavior: Route to SQL_ENGINE and preserve both the text condition "delays" and the sheet filter "Sheet1".
 
+MULTI-INTENT DETECTION (check this FIRST before routing):
+If the user's query contains multiple DISTINCT analytical questions, set "route": "REFUSE" and "multi_intent": true with a helpful follow_up_questions message asking them to ask one question at a time.
+
+Signs of multi-intent (any two or more of these in one query):
+- Multiple "what is" / "what are" phrases targeting different metrics or columns
+- A distribution or histogram request combined with any aggregation (max/min/avg/sum)
+- An aggregation with a filter combined with a separate record lookup (e.g. "find name/record for highest X")
+- Multiple aggregations over DIFFERENT columns or with DIFFERENT filter conditions
+
+Single-intent examples that should NOT be refused:
+- "what is the max AND min of Total Paid" (two aggregations, same column, same scope — allow)
+- "give me the average Total Paid where Coverage = 'GL'" (one aggregation with one filter — allow)
+- "show distribution of Total Incurred" (one operation — allow)
+- "sort by Total Paid descending and show top 10" (one ranked lookup — allow)
+
 Routes:
 - PROFILE_ONLY: schema/profile/summary requests.
 - TEXT_TABLE_RAG: semantic search or natural-language matching over text-heavy fields.
-
 - SQL_ENGINE: complex analytics (aggregations + filters/grouping/sorting/comparisons).
-- REFUSE: ambiguous or unanswerable query. If details are missing, return REFUSE with follow_up_questions.
+- REFUSE: ambiguous, unanswerable, or multi-intent query. If details are missing or multiple distinct questions are detected, return REFUSE with follow_up_questions.
 
 Dataset Profile:
 {dataset_profile}
@@ -330,6 +373,8 @@ User Query: {query}
 Return ONLY valid JSON using this schema:
 {{
   "route": "SQL_ENGINE|TEXT_TABLE_RAG|PROFILE_ONLY|REFUSE",
+  "multi_intent": false,
+  "reasoning": "One line reasoning of what operation, column, conditions etc were selected and why in less than 50 words",
   "schema": {{
     "operation": "sum|avg|count|max|min|median|mode|std|variance|quantile|histogram|value_counts|distinct_count|null_count|null_pct|correlation|filter|semantic|profile|none",
     "columns": ["ExactColumnNameFromProfile"],
@@ -377,9 +422,17 @@ INSTRUCTIONS for SQL sheet scoping:
 - Keep the same sheet filter in both top-level schema.filters and schema.sql_plan.filters for SQL_ENGINE routes.
 """.strip()
 
+        return template.format(
+            query=query,
+            dataset_profile=dataset_profile,
+            semantic_summary=semantic_summary,
+            history_text=history_text,
+            text_heavy=text_heavy,
+        )
+
     def run(self, input_data: dict) -> dict:
+        logger.info("RouterAgent (tester): Initiated")
         raw_query = input_data.get("query", "")
-        normalized_query = raw_query.lower()
         dataset_profile = input_data.get("dataset_profile", "")
         semantic_summary = input_data.get("semantic_summary", "")
         text_heavy = input_data.get("text_heavy", False)
@@ -389,55 +442,111 @@ INSTRUCTIONS for SQL sheet scoping:
         if history is None and chat_id:
             history = get_history(chat_id)
         history = history or []
-
-        # Truncate to last 5 user prompts only (no assistant responses)
         history_text = truncate_history(history, max_user_turns=5)
 
-        # Direct LLM call - No Regex Fast Path
         prompt = self._build_llm_prompt(raw_query, dataset_profile, semantic_summary, history_text, text_heavy)
+
         try:
+            ts = datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+            prompt_preview = prompt if len(prompt) <= 6000 else prompt[:6000] + "...[truncated]"
+            logger.info("RouterAgent (tester): Prompt_timestamp=%s", ts)
+            logger.info("RouterAgent (tester): Prompt_preview=\n%s", json.dumps(prompt_preview, ensure_ascii=False))
+
             response = llm_client.generate([{"role": "user", "content": prompt}], options={"temperature": 0.0})
-            
-            # Strip markdown code fences produced by some LLMs.
-            # split("```")[-1] is wrong: it returns the empty string AFTER the closing fence.
-            # Instead take the first interior block (index 1 in the split result).
+
+            # Use index [1] not [-1]: split("```json") gives ["before", "content```"], so [1]
+            # is the interior. split("```json")[-1] returns "" when response ends with ```.
             clean_response = response.strip()
             if "```json" in clean_response:
                 clean_response = clean_response.split("```json")[1].split("```")[0].strip()
             elif "```" in clean_response:
                 parts = clean_response.split("```")
-                # parts[1] is the content of the first fenced block; strip optional lang tag
                 content = parts[1] if len(parts) > 1 else clean_response
                 clean_response = re.sub(r"^[a-z]+\s*\n", "", content, count=1).strip()
-            
+
             parsed = json.loads(clean_response)
-            route = parsed.get("route", "").upper().strip()
-            
+            logger.info("RouterAgent (tester): Response from Bedrock: %s", parsed)
+
+            if not isinstance(parsed, dict):
+                logger.warning("RouterAgent (tester): LLM returned non-dict: %s", type(parsed).__name__)
+                parsed = {}
+
+            route = parsed.get("route", "").upper().strip() if isinstance(parsed.get("route"), str) else ""
+            raw_schema = parsed.get("schema")
+            if not isinstance(raw_schema, dict):
+                raw_schema = {}
+
+            # LLM-level multi-intent detection (semantic, fires before schema inspection)
+            if parsed.get("multi_intent"):
+                questions = (raw_schema or {}).get("follow_up_questions") or []
+                if not questions:
+                    questions = [
+                        "Your question contains multiple analytical requests that each need a separate query. "
+                        "Please ask one at a time for accurate results. For example, start with: "
+                        "'Give me a distribution summary for Total Incurred.'"
+                    ]
+                logger.info("RouterAgent (tester): decision=REFUSE prompt_ts=%s reason=multi_intent_query", ts)
+                return {
+                    "engine": "REFUSE",
+                    "params": {"schema": self._build_refusal_schema("multi_intent_query", questions)},
+                    "explain": "multi_intent_query",
+                }
+
             if route in self.ROUTES:
-                normalized = self._normalize_schema(route, parsed.get("schema", {}), raw_query)
+                normalized = self._normalize_schema(route, raw_schema, raw_query)
+
+                confidence = float(normalized.get("confidence", 0.0))
+                if route not in {"REFUSE", "PROFILE_ONLY"} and confidence < self.CONFIDENCE_THRESHOLD:
+                    logger.info("RouterAgent (tester): decision=REFUSE prompt_ts=%s reason=low_confidence (%.2f < %.2f)", ts, confidence, self.CONFIDENCE_THRESHOLD)
+                    return {
+                        "engine": "REFUSE",
+                        "params": {"schema": self._build_refusal_schema(
+                            "low_confidence",
+                            ["Could you rephrase or add more detail so I can route your query accurately?"],
+                        )},
+                        "explain": f"low_confidence ({confidence:.2f})",
+                    }
+
                 refused = self._should_refuse(route, normalized, raw_query, dataset_profile)
-                return refused or {"route": route, "use_routing_agent": True, "schema": normalized}
+                if refused:
+                    logger.info("RouterAgent (tester): decision=REFUSE prompt_ts=%s reason=insufficient_structured_intent", ts)
+                    return {
+                        "engine": "REFUSE",
+                        "params": {"schema": refused.get("schema")},
+                        "explain": "insufficient_structured_intent",
+                    }
+
+                explain = parsed.get("reasoning") or f"confidence={confidence}"
+                logger.info("RouterAgent (tester): decision_engine=%s confidence=%s", route, confidence)
+                return {
+                    "engine": route,
+                    "params": {"schema": normalized},
+                    "explain": explain,
+                    "confidence": confidence,
+                }
+
         except Exception as e:
-            self.logger.error(f"Router LLM failed: {e}") 
-            # Fallback only on error
+            self.logger.error("RouterAgent (tester): Router LLM failed: %s", e)
             if text_heavy:
                 semantic_schema = self._semantic_schema()
-                semantic_schema["confidence"] = 0.65
+                semantic_schema["confidence"] = 0.5
                 semantic_schema["semantic_plan"]["query_text"] = raw_query
                 return {
-                    "route": "TEXT_TABLE_RAG",
-                    "use_routing_agent": True,
-                    "schema": self._normalize_schema("TEXT_TABLE_RAG", semantic_schema, raw_query),
+                    "engine": "TEXT_TABLE_RAG",
+                    "params": {"schema": self._normalize_schema("TEXT_TABLE_RAG", semantic_schema, raw_query)},
+                    "explain": "fallback_text_heavy",
+                    "fallback": {"reason": "llm_error", "detail": str(e)},
                 }
 
         return {
-            "route": "REFUSE",
-            "use_routing_agent": True,
-            "schema": self._build_refusal_schema(
+            "engine": "REFUSE",
+            "params": {"schema": self._build_refusal_schema(
                 "unable_to_route_with_confidence",
                 [
                     "Could you clarify which metric/column you want?",
                     "Should I apply any filters such as region/date/value thresholds?",
                 ],
-            ),
+            )},
+            "explain": "unable_to_route_with_confidence",
+            "fallback": {"reason": "no_confident_route"},
         }
