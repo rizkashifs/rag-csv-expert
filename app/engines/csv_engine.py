@@ -394,11 +394,13 @@ class SQLEngine:
         if operation == "value_counts":
             if not valid_columns:
                 return [], "no target column was resolved from the query"
-            top_k = intent.get("top_k") or intent.get("limit") or 10
+            top_k = intent.get("top_k") or intent.get("limit") or None
             filter_desc = self._get_filter_description(filters)
             rows: List[Dict[str, Any]] = []
             for col in valid_columns:
-                counts = filtered_df[col].value_counts(dropna=False).head(int(top_k))
+                counts = filtered_df[col].value_counts(dropna=False)
+                if top_k is not None:
+                    counts = counts.head(int(top_k))
                 for label, count in counts.items():
                     label_text = "null" if pd.isna(label) else str(label)
                     rows.append(

@@ -383,7 +383,7 @@ Return ONLY valid JSON using this schema:
     "having": [{{"column": "ExactColumnName", "operator": ">", "value": "1000"}}],
     "aggregations": [{{"function": "sum", "column": "ExactColumnName"}}],
     "sort": [{{"column": "ExactColumnName", "direction": "desc"}}],
-    "limit": 10,
+    "limit": null,
     "engine_mode": "sql|simple|semantic",
     "confidence": 0.0,
     "sql_plan": {{
@@ -393,7 +393,7 @@ Return ONLY valid JSON using this schema:
       "group_by": [{{"column": "ExactColumnName", "time_grain": "year|month|day|null"}}],
       "having": [{{"column": "ExactColumnName", "operator": ">", "value": "1000"}}],
       "order_by": [{{"column": "ExactColumnName", "direction": "desc"}}],
-      "limit": 10
+      "limit": null
     }},
     "semantic_plan": {{
       "query_text": "{query}",
